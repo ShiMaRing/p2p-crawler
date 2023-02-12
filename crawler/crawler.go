@@ -13,9 +13,9 @@ const (
 )
 
 type Crawler struct {
-	BootNodes    nodeSet // BootNodes is the set of nodes that the crawler will start from.
-	CurrentNodes nodeSet // CurrentNodes is the set of nodes that the crawler is currently crawling.
-	NewNodes     nodeSet // NewNodes is the set of nodes that the crawler has found during the current crawl.
+	BootNodes    []*enode.Node // BootNodes is the set of nodes that the crawler will start from.
+	CurrentNodes nodeSet       // CurrentNodes is the set of nodes that the crawler is currently crawling.
+	NewNodes     nodeSet       // NewNodes is the set of nodes that the crawler has found during the current crawl.
 
 	ReqCh    chan *enode.Node // ReqCh is the channel that the crawler uses to send requests to the workers.
 	FilterCh chan *enode.Node // FilterCh is the channel that the crawler uses to send requests to the filter.
