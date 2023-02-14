@@ -18,7 +18,6 @@ const (
 type Config struct {
 	TotalTimeout time.Duration //limit the time of the crawler life
 	RoundTimeout time.Duration //limit the time of each round
-	Version      Version       //the version of the network
 
 	Workers  int // Workers is the number of workers that the crawler will use to crawl the network.
 	PoolSize int // PoolSize is the size of the pool for tcp connections when we request for node info.
@@ -37,7 +36,6 @@ func DefaultConfig() Config {
 	return Config{
 		TotalTimeout: DefaultTimeout,
 		RoundTimeout: RoundInterval,
-		Version:      Discv4,
 		Workers:      DefaultWorkers,
 		PoolSize:     DefaultPoolSize,
 		IsPersistent: false,
