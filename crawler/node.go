@@ -1,16 +1,13 @@
 package crawler
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"net"
-	"sort"
+	"reflect"
 	"time"
 )
-
-type nodeSet map[enode.ID]Node
 
 // Node represents a node in the network.
 type Node struct {
@@ -22,64 +19,55 @@ type Node struct {
 	n           *enode.Node
 }
 
-//ParseEnNode parse the enode.Node to Node. after successfully connected to the node.
-func ParseEnNode(n *enode.Node, connected bool) Node {
-	return Node{
-		ID:          n.ID(),
-		Seq:         n.Seq(),
-		AccessTime:  time.Now(),
-		Address:     n.IP(),
-		ConnectAble: connected,
-		n:           n,
+// GetEnodeV4 get all nodes from this node
+func (node *Node) GetEnodeV4(ch chan *Node, db *enode.DB, bootNodes []*enode.Node) []*Node {
+	//make a local node for crawl
+	//generate a local node
+	ln, cfg := makeDiscoveryConfig(db, bootNodes)
+	conn := listen(ln, "")
+	//set up udp connection for this node
+	disc, err := discover.ListenV4(conn, ln, cfg)
+	if err != nil {
+		panic(err)
 	}
-}
+	defer disc.Close()
+	//crawl the node ,send it to the channel and return result
 
-// Node2Json MarshalJSON implements the json.Marshaler interface.
-func (n *Node) Node2Json() ([]byte, error) {
-	return json.Marshal(n)
-}
-
-// AddNode add a node to the nodeSet.
-func (s nodeSet) AddNode(n *enode.Node, connected bool) {
-	s[n.ID()] = ParseEnNode(n, connected)
-}
-
-// GetNode get a node from the nodeSet.
-func (s nodeSet) GetNode(id enode.ID) *Node {
-	if n, ok := s[id]; ok {
-		return &n
-	}
+	//return the nodes
 	return nil
 }
 
-// Contain check if the nodeSet contains the node.
-func (s nodeSet) Contain(n *enode.Node) bool {
-	if _, ok := s[n.ID()]; ok {
-		return true
+func makeDiscoveryConfig(db *enode.DB, bootNodes []*enode.Node) (*enode.LocalNode, discover.Config) {
+	var cfg discover.Config
+	var err error
+	cfg.PrivateKey, _ = crypto.GenerateKey()
+	cfg.Bootnodes = bootNodes
+	if err != nil {
+		panic(err)
 	}
-	return false
+	return enode.NewLocalNode(db, cfg.PrivateKey), cfg
 }
 
-//RemoveNode Remove a node from the nodeSet.
-func (s nodeSet) RemoveNode(n *enode.Node) {
-	delete(s, n.ID())
+func listen(ln *enode.LocalNode, addr string) *net.UDPConn {
+	if addr == "" {
+		addr = "0.0.0.0:0"
+	}
+	socket, err := net.ListenPacket("udp4", addr)
+	if err != nil {
+		panic(err)
+	}
+	usocket := socket.(*net.UDPConn)
+	uaddr := socket.LocalAddr().(*net.UDPAddr)
+	if uaddr.IP.IsUnspecified() {
+		ln.SetFallbackIP(net.IP{127, 0, 0, 1})
+	} else {
+		ln.SetFallbackIP(uaddr.IP)
+	}
+	ln.SetFallbackUDP(uaddr.Port)
+	return usocket
 }
 
-//OutputNodes output the nodeSet to a slice.
-func (s nodeSet) OutputNodes() []*enode.Node {
-	var nodes []*enode.Node
-	for _, v := range s {
-		nodes = append(nodes, v.n)
-	}
-	sort.Slice(nodes, func(i, j int) bool {
-		return bytes.Compare(nodes[i].ID().Bytes(), nodes[j].ID().Bytes()) < 0
-	})
-	return nodes
-}
-
-//PrintNodes print the nodeSet.
-func (s nodeSet) PrintNodes() {
-	for _, v := range s {
-		fmt.Println(v.n.String())
-	}
+func modifyID(n *enode.LocalNode, id enode.ID) {
+	v := reflect.ValueOf(n)
+	v.Elem().FieldByName("id").Set(reflect.ValueOf(id))
 }
