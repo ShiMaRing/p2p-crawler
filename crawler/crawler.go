@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 	_ "github.com/go-sql-driver/mysql"
+	"go.uber.org/zap"
 	"sync"
 	"time"
 )
@@ -25,18 +26,19 @@ const (
 type Crawler struct {
 	BootNodes    []*enode.Node // BootNodes is the set of nodes that the crawler will start from.
 	CurrentNodes nodeSet       // CurrentNodes is the set of nodes that the crawler is currently crawling.
-	NewNodes     nodeSet       // NewNodes is the set of nodes that the crawler has found during the current crawl.
 
 	ReqCh    chan *enode.Node // ReqCh is the channel that the crawler uses to send requests to the workers.
-	OutputCh chan *enode.Node // OutputCh is the channel that the crawler uses to send requests to the filter.
+	OutputCh chan *Node       // OutputCh is the channel that the crawler uses to send requests to the filter.
 
-	leveldb *enode.DB // leveldb is the database that the crawler uses to store the nodes.
-	db      *sql.DB   // db is the database that the crawler uses to store the nodes.
+	leveldb   *enode.DB          // leveldb is the database that the crawler uses to store the nodes.
+	db        *sql.DB            // db is the database that the crawler uses to store the nodes.
+	tableName string             // tableName is the name of the table that the crawler will use to store the nodes.
+	mu        sync.Mutex         // mu is the mutex that protects the crawler.
+	ctx       context.Context    // ctx is the context that the crawler uses to cancel all crawl.
+	cancel    context.CancelFunc // cancel is the function that the crawler uses to cancel all crawl.
 
-	mu     sync.Mutex         // mu is the mutex that protects the crawler.
-	ctx    context.Context    // ctx is the context that the crawler uses to cancel all crawl.
-	cancel context.CancelFunc // cancel is the function that the crawler uses to cancel all crawl.
-	Config                    // config is the config that the crawler uses to store the state of the crawler.
+	logger *zap.Logger // logger is the logger that the crawler uses to log the information.
+	Config             // config is the config that the crawler uses to store the state of the crawler.
 }
 
 func NewCrawler(config Config) (*Crawler, error) {
@@ -73,7 +75,7 @@ func NewCrawler(config Config) (*Crawler, error) {
 	}
 	//create ctx
 	reqCh := make(chan *enode.Node, DefaultChanelSize)
-	outputCh := make(chan *enode.Node, DefaultChanelSize)
+	outputCh := make(chan *Node, DefaultChanelSize)
 	var db *sql.DB
 	if config.IsSql == true {
 		db, err = sql.Open("mysql", config.DatabaseUrl)
@@ -82,15 +84,17 @@ func NewCrawler(config Config) (*Crawler, error) {
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), config.TotalTimeout)
+	logger, _ := zap.NewProduction()
 	crawler := &Crawler{
 		BootNodes:    nodes,
 		CurrentNodes: make(nodeSet),
-		NewNodes:     make(nodeSet),
 		ReqCh:        reqCh,
 		OutputCh:     outputCh,
 		leveldb:      ldb,
 		db:           db,
 		ctx:          ctx,
+		logger:       logger,
+		tableName:    config.TableName,
 		cancel:       cancel,
 		Config:       config,
 	}
@@ -101,4 +105,71 @@ func NewCrawler(config Config) (*Crawler, error) {
 // Boot Start starts the crawler.
 func (c *Crawler) Boot() {
 
+}
+
+// Persistent persists the nodes to the database,which run in the background.
+func (c *Crawler) Persistent() {
+	//save the nodes to the database
+	buffer := make([]*Node, 0, DefaultChanelSize)
+	statement, err := c.db.Prepare(`replace into nodes (id,seq,access_time,address,connected) values (?,?,?,?,?)`)
+	if err != nil {
+		c.logger.Fatal("prepare sql statement failed", zap.Error(err))
+	}
+	defer statement.Close()
+	for {
+		select {
+		case <-c.ctx.Done():
+			//save the nodes in outputCh to the database
+			for n := range c.OutputCh {
+				c.leveldb.UpdateNode(n.n)
+				buffer = append(buffer, n)
+			}
+			if c.IsSql {
+				err := c.saveNodes(buffer, statement)
+				if err != nil {
+					c.logger.Error("save nodes to sql db failed", zap.Error(err))
+				}
+			}
+			return
+		case node := <-c.OutputCh:
+			err := c.leveldb.UpdateNode(node.n)
+			if err != nil {
+				c.logger.Error("save nodes to leveldb failed", zap.Error(err))
+			}
+			if !c.IsSql {
+				continue
+			}
+			buffer = append(buffer, node)
+			if len(buffer) == DefaultChanelSize {
+				err := c.saveNodes(buffer, statement)
+				if err != nil {
+					c.logger.Error("save nodes to sql db failed", zap.Error(err))
+				}
+				buffer = buffer[:0]
+			}
+		}
+	}
+}
+
+// saveNodes saves the nodes to the database.
+
+func (c *Crawler) saveNodes(buffer []*Node, statement *sql.Stmt) error {
+	//batch insert
+	if c.db == nil {
+		return fmt.Errorf("invalid database")
+	}
+	var err error
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction failed: %v", err)
+	}
+	for i := range buffer {
+		node := buffer[i]
+		_, err = tx.Stmt(statement).Exec(node.n.ID().String(), node.n.Seq(), node.AccessTime, node.n.IP().String(), node.ConnectAble)
+		if err != nil {
+			defer tx.Rollback()
+			return fmt.Errorf("exec sql statement failed: %v", err)
+		}
+	}
+	return tx.Commit()
 }
