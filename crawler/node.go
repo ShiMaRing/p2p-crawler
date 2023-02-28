@@ -5,7 +5,6 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"net"
-	"reflect"
 	"time"
 )
 
@@ -65,9 +64,4 @@ func listen(ln *enode.LocalNode, addr string) *net.UDPConn {
 	}
 	ln.SetFallbackUDP(uaddr.Port)
 	return usocket
-}
-
-func modifyID(n *enode.LocalNode, id enode.ID) {
-	v := reflect.ValueOf(n)
-	v.Elem().FieldByName("id").Set(reflect.ValueOf(id))
 }
