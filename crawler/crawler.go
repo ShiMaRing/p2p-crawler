@@ -2,8 +2,11 @@ package crawler
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"database/sql"
+	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 	_ "github.com/go-sql-driver/mysql"
@@ -13,21 +16,24 @@ import (
 )
 
 const (
-	Interval       = 6 * time.Second  //crawl interval for each node
-	RoundInterval  = 10 * time.Second //crawl interval for each round
-	DefaultTimeout = 1 * time.Hour    //check interval for all nodes
+	RoundInterval = 60 * time.Second //crawl interval for each node
 
+	DefaultTimeout    = 1 * time.Hour //check interval for all nodes
+	respTimeout       = 500 * time.Millisecond
 	DefaultChanelSize = 512
-
-	seedCount  = 30
-	seedMaxAge = 5 * 24 * time.Hour
+	bondExpiration    = 24 * time.Hour
+	seedCount         = 30
+	seedMaxAge        = 5 * 24 * time.Hour
+	seedsCount        = 32
+	MaxDHTSize        = 17 * 16
 )
 
 type Crawler struct {
-	BootNodes    []*enode.Node // BootNodes is the set of nodes that the crawler will start from.
-	CurrentNodes nodeSet       // CurrentNodes is the set of nodes that the crawler is currently crawling.
+	BootNodes []*enode.Node         // BootNodes is the set of nodes that the crawler will start from.
+	Cache     map[enode.ID]struct{} // Cache is the set of nodes that the crawler is currently crawling,as a cache
 
 	ReqCh    chan *enode.Node // ReqCh is the channel that the crawler uses to send requests to the workers.
+	tokens   chan struct{}    //tokens store token
 	OutputCh chan *Node       // OutputCh is the channel that the crawler uses to send requests to the filter.
 
 	leveldb   *enode.DB          // leveldb is the database that the crawler uses to store the nodes.
@@ -36,6 +42,8 @@ type Crawler struct {
 	mu        sync.Mutex         // mu is the mutex that protects the crawler.
 	ctx       context.Context    // ctx is the context that the crawler uses to cancel all crawl.
 	cancel    context.CancelFunc // cancel is the function that the crawler uses to cancel all crawl.
+
+	counter Counter
 
 	logger *zap.Logger // logger is the logger that the crawler uses to log the information.
 	Config             // config is the config that the crawler uses to store the state of the crawler.
@@ -49,8 +57,9 @@ func NewCrawler(config Config) (*Crawler, error) {
 
 	//start from the MainBootNodes
 	s := params.MainnetBootnodes
-	for i, record := range s {
-		nodes[i], err = parseNode(record)
+	for _, record := range s {
+		n, err := parseNode(record)
+		nodes = append(nodes, n) //add the node to the nodes
 		if err != nil {
 			return nil, fmt.Errorf("invalid bootstrap node: %v", err)
 		}
@@ -70,7 +79,7 @@ func NewCrawler(config Config) (*Crawler, error) {
 		//load the nodes from the database
 		tmp := ldb.QuerySeeds(seedCount, seedMaxAge)
 		if len(tmp) != 0 {
-			nodes = tmp
+			nodes = tmp //change the start nodes  from the database
 		}
 	}
 	//create ctx
@@ -86,32 +95,51 @@ func NewCrawler(config Config) (*Crawler, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.TotalTimeout)
 	logger, _ := zap.NewProduction()
 	crawler := &Crawler{
-		BootNodes:    nodes,
-		CurrentNodes: make(nodeSet),
-		ReqCh:        reqCh,
-		OutputCh:     outputCh,
-		leveldb:      ldb,
-		db:           db,
-		ctx:          ctx,
-		logger:       logger,
-		tableName:    config.TableName,
-		cancel:       cancel,
-		Config:       config,
+		BootNodes: nodes,
+		Cache:     make(map[enode.ID]struct{}),
+		ReqCh:     reqCh,
+		tokens:    make(chan struct{}, config.Workers),
+		OutputCh:  outputCh,
+		leveldb:   ldb,
+		db:        db,
+		ctx:       ctx,
+		logger:    logger,
+		tableName: config.TableName,
+		cancel:    cancel,
+		Config:    config,
 	}
 
 	return crawler, err
 }
 
-// Boot Start starts the crawler.
-func (c *Crawler) Boot() {
+// Boot starts the crawler.
+func (c *Crawler) Boot() error {
+	//put start nodes to the reqch ,and start crawling
+	for i := range c.BootNodes {
+		c.ReqCh <- c.BootNodes[i]
+		//add the node to the cache
+		c.Cache[c.BootNodes[i].ID()] = struct{}{}
+	}
+	go func() {
+		//read output chan, and persistent the nodes or add to the reqch
+		c.daemon()
+	}()
+	for {
+		select {
+		case <-c.ctx.Done(): //time out ,break it
+			return nil
+		case <-c.tokens: //wait for token
+			go c.Crawl()
+		}
+	}
 
 }
 
 // Persistent persists the nodes to the database,which run in the background.
-func (c *Crawler) Persistent() {
+func (c *Crawler) daemon() {
 	//save the nodes to the database
 	buffer := make([]*Node, 0, DefaultChanelSize)
-	statement, err := c.db.Prepare(`replace into nodes (id,seq,access_time,address,connected) values (?,?,?,?,?)`)
+	statement, err := c.db.Prepare(`replace into nodes (id,seq,access_time,address) values (?,?,?,?,?)`)
 	if err != nil {
 		c.logger.Fatal("prepare sql statement failed", zap.Error(err))
 	}
@@ -132,6 +160,13 @@ func (c *Crawler) Persistent() {
 			}
 			return
 		case node := <-c.OutputCh:
+			c.mu.Lock()
+			//we did not crawl the node,so we should add it to the reqch
+			if _, ok := c.Cache[node.n.ID()]; !ok {
+				c.Cache[node.n.ID()] = struct{}{} //add to the cache
+				c.ReqCh <- node.n                 //add to the reqch
+			}
+			c.mu.Unlock()
 			err := c.leveldb.UpdateNode(node.n)
 			if err != nil {
 				c.logger.Error("save nodes to leveldb failed", zap.Error(err))
@@ -165,11 +200,128 @@ func (c *Crawler) saveNodes(buffer []*Node, statement *sql.Stmt) error {
 	}
 	for i := range buffer {
 		node := buffer[i]
-		_, err = tx.Stmt(statement).Exec(node.n.ID().String(), node.n.Seq(), node.AccessTime, node.n.IP().String(), node.ConnectAble)
+		_, err = tx.Stmt(statement).Exec(node.n.ID().String(), node.n.Seq(), node.AccessTime, node.n.IP().String())
 		if err != nil {
 			defer tx.Rollback()
 			return fmt.Errorf("exec sql statement failed: %v", err)
 		}
 	}
 	return tx.Commit()
+}
+
+func (c *Crawler) Crawl() {
+	defer func() {
+		c.tokens <- struct{}{} //send token back for next worker
+	}()
+	var ctx, err = context.WithTimeout(context.Background(), RoundInterval)
+	if err != nil {
+		return
+	}
+	select {
+	case <-c.ctx.Done():
+		return
+	case node := <-c.ReqCh:
+		c.mu.Lock()
+		if _, ok := c.Cache[node.ID()]; ok {
+			c.mu.Unlock()
+			return
+		}
+		c.Cache[node.ID()] = struct{}{}
+		//get node for crawl,the node never crawled
+		result, err := c.crawl(node, ctx)
+		if err != nil {
+			c.logger.Error("crawl node failed", zap.Error(err))
+			return
+		}
+		if result != nil {
+			for i := range result {
+				node := result[i]
+				n := &Node{
+					ID:         node.ID(),
+					Seq:        node.Seq(),
+					AccessTime: time.Now(),
+					Address:    node.IP(),
+					n:          node,
+				}
+				c.OutputCh <- n
+			}
+		}
+	}
+
+}
+
+//crawl the node
+func (c *Crawler) crawl(node *enode.Node, ctx context.Context) ([]*enode.Node, error) {
+	var cache = make(map[enode.ID]*enode.Node) //cache the nodes
+	var res []*enode.Node
+	prk, _ := crypto.GenerateKey()
+	c.mu.Lock()
+	ld := enode.NewLocalNode(c.leveldb, prk)
+	c.mu.Unlock()
+	conn := listen(ld, "") //bind the local node to the port
+	err := c.pingPong(conn, ld, node, prk)
+	if err != nil {
+		c.logger.Error("ping pong failed", zap.Error(err))
+		return nil, err
+	}
+	//we try to crawl the DHT table
+	for {
+		select {
+		case <-ctx.Done():
+			return res, nil
+		default:
+			//generate the random node
+			randomNodes := c.generateRandomNode()
+			for i := range randomNodes {
+				//send the findnode request and get the response
+				targetNode := randomNodes[i]
+				findNodes, err := c.findNode(conn, node, prk, targetNode)
+				if err != nil {
+					c.logger.Error("find node failed", zap.Error(err))
+					continue
+				}
+				if findNodes != nil {
+					//send to the output channel
+					var end = true
+					for _, n := range findNodes {
+						//check the node is in the cache
+						if _, ok := cache[n.ID()]; !ok {
+							end = false
+							cache[n.ID()] = n
+							res = append(res, n)
+						}
+						if end || len(res) >= MaxDHTSize {
+							return res, nil
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (c *Crawler) pingPong(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk *ecdsa.PrivateKey) error {
+	//ping pong
+	err := c.Ping(conn, ld, node, prk)
+	if err != nil {
+		return err
+	}
+	time.Sleep(respTimeout) //wait for the response
+	from, packet, _, hash, err := c.handleResponse(conn)
+	if err != nil {
+		return errors.New("handle ping response failed with error: " + err.Error())
+	}
+	err = c.Pong(conn, ld, prk, packet, hash, from)
+	time.Sleep(respTimeout) //wait for the response
+	if err != nil {
+		return errors.New("send pong failed with error: " + err.Error())
+	}
+	return nil
+}
+
+func (c *Crawler) generateRandomNode() []*enode.Node {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.leveldb.QuerySeeds(seedCount, 24*time.Hour)
 }

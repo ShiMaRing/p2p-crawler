@@ -11,9 +11,9 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/params"
-	"io"
 	"log"
 	"net"
+	"os"
 	"testing"
 	"time"
 )
@@ -73,11 +73,6 @@ var BootNodes = []string{
 	"enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
 }
 
-type encPubkey [64]byte
-
-const expiration = 20 * time.Second
-const maxPacketSize = 1200
-
 func TestFindNode(t *testing.T) {
 	var err error
 	//open db in memory
@@ -85,16 +80,15 @@ func TestFindNode(t *testing.T) {
 	prk, _ := crypto.GenerateKey()
 	ld := enode.NewLocalNode(db, prk)
 	conn := listen(ld, "")
-
-	targetNode, _ := parseNode("enode://5d6d7cd20d6da4bb83a1d28cadb5d409b64edf314c0335df658c1a54e32c7c4a7ab7823d57c39b6a757556e68ff1df17c748b698544a55cb488b52479a92b60f@104.42.217.25:30303")
+	//targetNode, _ := parseNode("enode://5d6d7cd20d6da4bb83a1d28cadb5d409b64edf314c0335df658c1a54e32c7c4a7ab7823d57c39b6a757556e68ff1df17c748b698544a55cb488b52479a92b60f@104.42.217.25:30303")
+	targetNode := ld.Node()
 	//make packet and send it to the target node
 	node, _ := parseNode("enode://0694c08573902a5daa723b255fe30bb47a74398c1837e9550f4aa1868116c2ee416df026fb9f1533891c1a2d6fbe3b49a6a11f533e200d26a668809f40e565e6@150.136.69.241:5050")
-
 	fmt.Printf("target node ID: %s\n", targetNode.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = MyPing(conn, ld, node, prk)
+	err = Ping(conn, ld, node, prk)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +101,7 @@ func TestFindNode(t *testing.T) {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	err = MyPong(conn, ld, prk, p, hash, from)
+	err = Pong(conn, ld, prk, p, hash, from)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,63 +130,17 @@ func TestFindNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodes := neighbor.(*v4wire.Neighbors).Nodes
+	f, err := os.Create("nodes.txt")
 	for _, n := range nodes {
 		key, err := v4wire.DecodePubkey(crypto.S256(), n.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		n := enode.NewV4(key, n.IP, int(n.TCP), int(n.UDP))
-		t.Log(n.String())
+		//write to the file
+		f.WriteString(n.String() + "\n")
 	}
-}
-
-//send a pong back
-func MyPong(conn UDPConn, ld *enode.LocalNode, prk *ecdsa.PrivateKey,
-	tmp v4wire.Packet, mac []byte, from *net.UDPAddr) error {
-	// Reply.
-	req := tmp.(*v4wire.Ping)
-	//make a ping packet
-	pongPacket := &v4wire.Pong{
-		To:         v4wire.NewEndpoint(from, req.From.TCP),
-		ReplyTok:   mac,
-		Expiration: uint64(time.Now().Add(expiration).Unix()),
-		ENRSeq:     ld.Node().Seq(),
-	}
-	packet, _, err := v4wire.Encode(prk, pongPacket)
-	if err != nil {
-		log.Fatalln(err)
-		return err
-	}
-	_, err = conn.WriteToUDP(packet, from)
-	return err
-}
-
-//send a ping request to the target node
-func MyPing(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk *ecdsa.PrivateKey) error {
-	toaddr := &net.UDPAddr{IP: node.IP(), Port: node.UDP()}
-	n := ld.Node()
-	a := &net.UDPAddr{IP: n.IP(), Port: n.UDP()}
-	endPoint := v4wire.NewEndpoint(a, uint16(n.TCP()))
-	//make a ping packet
-	req := &v4wire.Ping{
-		Version:    4,
-		From:       endPoint,
-		To:         v4wire.NewEndpoint(toaddr, 0),
-		Expiration: uint64(time.Now().Add(expiration).Unix()),
-		ENRSeq:     ld.Seq(),
-	}
-	packet, _, err := v4wire.Encode(prk, req)
-	if err != nil {
-		log.Fatalln("encode error", err)
-		return err
-	}
-	ld.UDPContact(toaddr)
-	_, err = conn.WriteToUDP(packet, &net.UDPAddr{IP: node.IP(), Port: node.UDP()})
-	if err != nil {
-		log.Fatalln("encode error", err)
-		return err
-	}
-	return nil
+	f.Close()
 }
 
 //Passed
@@ -228,50 +176,6 @@ func TestPing(t *testing.T) {
 
 }
 
-// handle the incoming packets
-func handleResponse(conn UDPConn) (*net.UDPAddr, v4wire.Packet, v4wire.Pubkey, []byte, error) {
-	//make a ping packet for the node
-	buf := make([]byte, maxPacketSize)
-	nbytes, from, err := conn.ReadFromUDP(buf)
-	if netutil.IsTemporaryError(err) {
-		// Ignore temporary read errors.
-		fmt.Printf("temporary read error: %v", err)
-		return nil, nil, [64]byte{}, nil, err
-	} else if err != nil {
-		// Shut down the loop for permanent errors.
-		if !errors.Is(err, io.EOF) {
-			fmt.Printf("permanent read error: %v", err)
-		}
-		return nil, nil, [64]byte{}, nil, err
-	}
-	fmt.Printf("read %d bytes:%s \n", nbytes, string(buf[:nbytes]))
-	//handle the packet
-	rawpacket, pubkey, hash, err := v4wire.Decode(buf[:nbytes])
-	if err != nil {
-		fmt.Printf("decode error: %v", err)
-		return nil, nil, [64]byte{}, nil, err
-	}
-	//handle the packet may be pong or find node response
-	switch t := rawpacket.(type) {
-	case *v4wire.Pong:
-		fmt.Printf("pong received: %v", rawpacket.(*v4wire.Pong).ReplyTok)
-		return from, rawpacket.(*v4wire.Pong), pubkey, hash, nil
-	case *v4wire.Neighbors:
-		fmt.Printf("neighbors received: %v", rawpacket.(*v4wire.Neighbors).Nodes)
-		return from, rawpacket.(*v4wire.Neighbors), pubkey, hash, nil
-	case *v4wire.Ping:
-		fmt.Printf("ping received: %v", rawpacket.(*v4wire.Ping).Name())
-		return from, rawpacket.(*v4wire.Ping), pubkey, hash, nil
-
-	default:
-		name := t.Name()
-		kind := t.Kind()
-		fmt.Printf("unknown packet type: %s and kind is %s", name, string(kind))
-	}
-	return nil, nil, [64]byte{}, nil, err
-
-}
-
 //passed
 func TestOriginPing(t *testing.T) {
 	var err error
@@ -300,4 +204,73 @@ func TestOriginPing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+func handleResponse(conn UDPConn) (*net.UDPAddr, v4wire.Packet, v4wire.Pubkey, []byte, error) {
+	//make a ping packet for the node
+	buf := make([]byte, maxPacketSize)
+	nbytes, from, err := conn.ReadFromUDP(buf)
+	if netutil.IsTemporaryError(err) {
+		return nil, nil, [64]byte{}, nil, err
+	} else if err != nil {
+		return nil, nil, [64]byte{}, nil, err
+	}
+
+	rawpacket, pubkey, hash, err := v4wire.Decode(buf[:nbytes])
+	if err != nil {
+		return nil, nil, [64]byte{}, nil, err
+	}
+	//handle the packet may be pong or find node response
+	switch t := rawpacket.(type) {
+	case *v4wire.Pong:
+		return from, rawpacket.(*v4wire.Pong), pubkey, hash, nil
+	case *v4wire.Neighbors:
+		return from, rawpacket.(*v4wire.Neighbors), pubkey, hash, nil
+	case *v4wire.Ping:
+		return from, rawpacket.(*v4wire.Ping), pubkey, hash, nil
+	default:
+		name := t.Name()
+		kind := t.Kind()
+		return nil, nil, [64]byte{}, nil, errors.New(fmt.Sprintf("unknown packet type %s %d", name, kind))
+	}
+}
+func Ping(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk *ecdsa.PrivateKey) error {
+	toaddr := &net.UDPAddr{IP: node.IP(), Port: node.UDP()}
+	n := ld.Node()
+	a := &net.UDPAddr{IP: n.IP(), Port: n.UDP()}
+	endPoint := v4wire.NewEndpoint(a, uint16(n.TCP()))
+	req := &v4wire.Ping{
+		Version:    4,
+		From:       endPoint,
+		To:         v4wire.NewEndpoint(toaddr, 0),
+		Expiration: uint64(time.Now().Add(expiration).Unix()),
+		ENRSeq:     ld.Seq(),
+	}
+	packet, _, err := v4wire.Encode(prk, req)
+	if err != nil {
+		return err
+	}
+	ld.UDPContact(toaddr)
+	_, err = conn.WriteToUDP(packet, &net.UDPAddr{IP: node.IP(), Port: node.UDP()})
+
+	return err
+}
+
+//send a pong back
+func Pong(conn UDPConn, ld *enode.LocalNode, prk *ecdsa.PrivateKey,
+	tmp v4wire.Packet, mac []byte, from *net.UDPAddr) error {
+	// Reply.
+	req := tmp.(*v4wire.Ping)
+	//make a ping packet
+	pongPacket := &v4wire.Pong{
+		To:         v4wire.NewEndpoint(from, req.From.TCP),
+		ReplyTok:   mac,
+		Expiration: uint64(time.Now().Add(expiration).Unix()),
+		ENRSeq:     ld.Node().Seq(),
+	}
+	packet, _, err := v4wire.Encode(prk, pongPacket)
+	if err != nil {
+		return err
+	}
+	_, err = conn.WriteToUDP(packet, from)
+	return err
 }

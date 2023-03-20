@@ -19,7 +19,7 @@ type UDPConn interface {
 	LocalAddr() net.Addr
 }
 
-// Config holds settings for the discovery listener.
+// UDPConfig  holds settings for the discovery listener.
 type UDPConfig struct {
 	// These settings are required and configure the UDP listener:
 	PrivateKey *ecdsa.PrivateKey

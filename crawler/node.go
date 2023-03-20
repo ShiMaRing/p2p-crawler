@@ -10,12 +10,11 @@ import (
 
 // Node represents a node in the network.
 type Node struct {
-	ID          enode.ID  `json:"ID,omitempty"`          // The node's public key
-	Seq         uint64    `json:"seq,omitempty"`         // The node's sequence number,tracks the number of times the node has been updated
-	AccessTime  time.Time `json:"accessTime"`            // The time of last successful contact
-	Address     net.IP    `json:"address,omitempty"`     // The IP address of the node
-	ConnectAble bool      `json:"connectAble,omitempty"` // The node is ConnectAble
-	n           *enode.Node
+	ID         enode.ID  `json:"ID,omitempty"`      // The node's public key
+	Seq        uint64    `json:"seq,omitempty"`     // The node's sequence number,tracks the number of times the node has been updated
+	AccessTime time.Time `json:"accessTime"`        // The time of last successful contact
+	Address    net.IP    `json:"address,omitempty"` // The IP address of the node
+	n          *enode.Node
 }
 
 // GetEnodeV4 get all nodes from this node
