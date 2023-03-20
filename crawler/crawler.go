@@ -139,11 +139,16 @@ func (c *Crawler) Boot() error {
 func (c *Crawler) daemon() {
 	//save the nodes to the database
 	buffer := make([]*Node, 0, DefaultChanelSize)
-	statement, err := c.db.Prepare(`replace into nodes (id,seq,access_time,address) values (?,?,?,?,?)`)
-	if err != nil {
-		c.logger.Fatal("prepare sql statement failed", zap.Error(err))
+	var err error
+	var statement *sql.Stmt
+	if c.IsSql {
+		statement, err = c.db.Prepare(`replace into nodes (id,seq,access_time,address) values (?,?,?,?,?)`)
+		if err != nil {
+			c.logger.Fatal("prepare sql statement failed", zap.Error(err))
+		}
+		defer statement.Close()
 	}
-	defer statement.Close()
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -166,6 +171,7 @@ func (c *Crawler) daemon() {
 				c.Cache[node.n.ID()] = struct{}{} //add to the cache
 				c.ReqCh <- node.n                 //add to the reqch
 			}
+			fmt.Println("get node count:", c.counter.GetRecvNum())
 			c.mu.Unlock()
 			err := c.leveldb.UpdateNode(node.n)
 			if err != nil {
