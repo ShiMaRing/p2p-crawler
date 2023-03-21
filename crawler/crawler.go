@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 	_ "github.com/go-sql-driver/mysql"
@@ -70,6 +71,20 @@ func NewCrawler(config Config) (*Crawler, error) {
 		if err != nil {
 			return nil, err
 		}
+		//add the nodes to the leveldb
+		ld, cfg := makeDiscoveryConfig(ldb, nodes)
+		conn := listen(ld, "")
+		defer func() {
+			conn.Close()
+		}()
+		v4, err := discover.ListenV4(conn, ld, cfg)
+		if err != nil {
+			return nil, err
+		}
+		key, _ := crypto.GenerateKey()
+		pbkey := &key.PublicKey
+		nodes = v4.LookupPubkey(pbkey)
+
 	} else {
 		//start from the database
 		ldb, err = enode.OpenDB(config.DbName)
@@ -108,7 +123,9 @@ func NewCrawler(config Config) (*Crawler, error) {
 		cancel:    cancel,
 		Config:    config,
 	}
-
+	for i := 0; i < config.Workers; i++ {
+		crawler.tokens <- struct{}{}
+	}
 	return crawler, err
 }
 
@@ -219,20 +236,17 @@ func (c *Crawler) Crawl() {
 	defer func() {
 		c.tokens <- struct{}{} //send token back for next worker
 	}()
-	var ctx, err = context.WithTimeout(context.Background(), RoundInterval)
-	if err != nil {
-		return
-	}
+	var ctx, cancel = context.WithTimeout(context.Background(), RoundInterval)
+	defer func() {
+		cancel()
+	}()
 	select {
 	case <-c.ctx.Done():
 		return
 	case node := <-c.ReqCh:
 		c.mu.Lock()
-		if _, ok := c.Cache[node.ID()]; ok {
-			c.mu.Unlock()
-			return
-		}
 		c.Cache[node.ID()] = struct{}{}
+		c.mu.Unlock()
 		//get node for crawl,the node never crawled
 		result, err := c.crawl(node, ctx)
 		if err != nil {
@@ -265,6 +279,9 @@ func (c *Crawler) crawl(node *enode.Node, ctx context.Context) ([]*enode.Node, e
 	ld := enode.NewLocalNode(c.leveldb, prk)
 	c.mu.Unlock()
 	conn := listen(ld, "") //bind the local node to the port
+	defer func() {
+		conn.Close()
+	}()
 	err := c.pingPong(conn, ld, node, prk)
 	if err != nil {
 		c.logger.Error("ping pong failed", zap.Error(err))

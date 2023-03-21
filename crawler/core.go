@@ -18,6 +18,7 @@ const maxPacketSize = 1200
 
 type encPubkey [64]byte
 
+// Ping send a ping to the node
 func (c *Crawler) Ping(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk *ecdsa.PrivateKey) error {
 	toaddr := &net.UDPAddr{IP: node.IP(), Port: node.UDP()}
 	n := ld.Node()
@@ -36,19 +37,21 @@ func (c *Crawler) Ping(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk 
 	}
 	ld.UDPContact(toaddr)
 	nbytes, err := conn.WriteToUDP(packet, &net.UDPAddr{IP: node.IP(), Port: node.UDP()})
-
-	if err != nil {
+	if err == nil {
 		c.counter.AddDataSizeSent(uint64(nbytes))
 		c.counter.AddSendNum()
 	}
 	return err
 }
 
-//send a pong back
+// Pong send a pong back
 func (c *Crawler) Pong(conn UDPConn, ld *enode.LocalNode, prk *ecdsa.PrivateKey,
 	tmp v4wire.Packet, mac []byte, from *net.UDPAddr) error {
 	// Reply.
-	req := tmp.(*v4wire.Ping)
+	req, success := tmp.(*v4wire.Ping)
+	if !success {
+		return errors.New("wrong packet type")
+	}
 	//make a ping packet
 	pongPacket := &v4wire.Pong{
 		To:         v4wire.NewEndpoint(from, req.From.TCP),
