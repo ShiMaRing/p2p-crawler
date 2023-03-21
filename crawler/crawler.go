@@ -17,11 +17,10 @@ import (
 )
 
 const (
-	RoundInterval = 5 * time.Second //crawl interval for each node
-
-	DefaultTimeout    = 1 * time.Hour //check interval for all nodes
+	RoundInterval     = 8 * time.Second //crawl interval for each node
+	DefaultTimeout    = 1 * time.Hour   //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
-	DefaultChanelSize = 512
+	DefaultChanelSize = 1024
 	bondExpiration    = 24 * time.Hour
 	seedCount         = 30
 	seedMaxAge        = 5 * 24 * time.Hour
@@ -177,7 +176,20 @@ func (c *Crawler) daemon() {
 		}
 		defer statement.Close()
 	}
-
+	ticker := time.NewTicker(2 * time.Second)
+	go func() {
+		for {
+			select {
+			case <-c.ctx.Done():
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				c.mu.Lock()
+				fmt.Println("get nodes count:", len(c.Cache))
+				c.mu.Unlock()
+			}
+		}
+	}()
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -200,10 +212,6 @@ func (c *Crawler) daemon() {
 				c.Cache[node.n.ID()] = struct{}{} //add to the cache
 				c.ReqCh <- node.n                 //add to the reqch
 			}
-			fmt.Println("get node from the output", node.n.String())
-			fmt.Println("the length of the cache is ", len(c.Cache))
-			fmt.Println("the length of the tokens is ", len(c.tokens))
-			fmt.Println(c.counter.ToString())
 			c.mu.Unlock()
 			err := c.leveldb.UpdateNode(node.n)
 			if err != nil {
@@ -273,7 +281,6 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 		cancel()
 		time.Sleep(time.Second)
 		c.tokens <- struct{}{} //send token back for next worker
-		fmt.Println("finish work ,and the tokens length is", len(c.tokens))
 	}()
 
 	go func() {
