@@ -20,14 +20,13 @@ const (
 	RoundInterval     = 8 * time.Second //crawl interval for each node
 	DefaultTimeout    = 1 * time.Hour   //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
-	DefaultChanelSize = 1024
-	bondExpiration    = 24 * time.Hour
+	DefaultChanelSize = 512
+	bondExpiration    = 2 * time.Hour
 	seedCount         = 30
 	seedMaxAge        = 5 * 24 * time.Hour
 	seedsCount        = 32
 	MaxDHTSize        = 17 * 16
 	Debug             = true
-	Threshold         = 5
 )
 
 type Crawler struct {
@@ -275,11 +274,11 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 	ld := enode.NewLocalNode(c.leveldb, prk)
 	c.mu.Unlock()
 	conn := listen(ld, "") //bind the local node to the port
-	nodesChan := make(chan nodes, 16)
+	nodesChan := make(chan nodes, 32)
 	defer func() {
 		conn.Close()
 		cancel()
-		time.Sleep(time.Second)
+		time.Sleep(500 * time.Millisecond)
 		c.tokens <- struct{}{} //send token back for next worker
 	}()
 
