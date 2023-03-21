@@ -10,7 +10,7 @@ const (
 	Discv4 Version = iota
 	Discv5
 
-	DefaultWorkers = 1
+	DefaultWorkers = 64
 )
 
 // Config is the context that the crawler uses to store the state of the crawler

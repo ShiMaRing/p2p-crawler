@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"strconv"
 	"sync"
 	"time"
 )
@@ -81,4 +82,12 @@ func (c *Counter) GetDataSizeReceived() uint64 {
 	c.Rwlock.RLock()
 	defer c.Rwlock.RUnlock()
 	return c.dataSizeReceived
+}
+
+func (c *Counter) ToString() string {
+	c.Rwlock.RLock()
+	defer c.Rwlock.RUnlock()
+	return "sendNum: " + strconv.Itoa(c.SendNum) + " recvNum: " + strconv.Itoa(c.RecvNum) + " nodesNum: " +
+		" dataSizeReceived: " +
+		strconv.FormatUint(c.dataSizeReceived, 10)
 }

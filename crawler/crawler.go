@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	RoundInterval = 15 * time.Second //crawl interval for each node
+	RoundInterval = 5 * time.Second //crawl interval for each node
 
 	DefaultTimeout    = 1 * time.Hour //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
@@ -73,9 +73,6 @@ func NewCrawler(config Config) (*Crawler, error) {
 		if err != nil {
 			return nil, err
 		}
-		for i := range nodes {
-			ldb.UpdateNode(nodes[i]) //update the node to the db
-		}
 		//add the nodes to the leveldb
 		if !Debug {
 			ld, cfg := makeDiscoveryConfig(ldb, nodes)
@@ -91,8 +88,11 @@ func NewCrawler(config Config) (*Crawler, error) {
 			pbkey := &key.PublicKey
 			nodes = v4.LookupPubkey(pbkey)
 		} else {
-			node, _ := parseNode("enode://0694c08573902a5daa723b255fe30bb47a74398c1837e9550f4aa1868116c2ee416df026fb9f1533891c1a2d6fbe3b49a6a11f533e200d26a668809f40e565e6@150.136.69.241:5050")
-			nodes = append(nodes, node)
+			node, _ := parseNode("enode://dd6c825d6a07ceaacaf236673bb66c386e3cb33a00fcbb0d8ec633892fdcf7079376bfd7188a775471edd7a4259f3925fa4989ff9d889269e0b3addad552b742@38.242.129.221:30300")
+			nodes = append(nodes[:0], node)
+		}
+		for i := range nodes {
+			ldb.UpdateNode(nodes[i]) //update the node to the db
 		}
 	} else {
 		//start from the database
@@ -146,6 +146,9 @@ func (c *Crawler) Boot() error {
 		//add the node to the cache
 		c.Cache[c.BootNodes[i].ID()] = struct{}{}
 	}
+	defer func() {
+		c.cancel()
+	}()
 	go func() {
 		//read output chan, and persistent the nodes or add to the reqch
 		c.daemon()
@@ -197,10 +200,10 @@ func (c *Crawler) daemon() {
 				c.Cache[node.n.ID()] = struct{}{} //add to the cache
 				c.ReqCh <- node.n                 //add to the reqch
 			}
-			fmt.Println("get node from the output", node.n.ID())
-			fmt.Println("the length of the reqch is ", len(c.ReqCh))
+			fmt.Println("get node from the output", node.n.String())
 			fmt.Println("the length of the cache is ", len(c.Cache))
 			fmt.Println("the length of the tokens is ", len(c.tokens))
+			fmt.Println(c.counter.ToString())
 			c.mu.Unlock()
 			err := c.leveldb.UpdateNode(node.n)
 			if err != nil {
@@ -221,31 +224,7 @@ func (c *Crawler) daemon() {
 	}
 }
 
-// saveNodes saves the nodes to the database.
-
-func (c *Crawler) saveNodes(buffer []*Node, statement *sql.Stmt) error {
-	//batch insert
-	if c.db == nil {
-		return fmt.Errorf("invalid database")
-	}
-	var err error
-	tx, err := c.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction failed: %v", err)
-	}
-	for i := range buffer {
-		node := buffer[i]
-		_, err = tx.Stmt(statement).Exec(node.n.ID().String(), node.n.Seq(), node.AccessTime, node.n.IP().String())
-		if err != nil {
-			defer tx.Rollback()
-			return fmt.Errorf("exec sql statement failed: %v", err)
-		}
-	}
-	return tx.Commit()
-}
-
 func (c *Crawler) Crawl() {
-	var ctx, cancel = context.WithTimeout(context.Background(), RoundInterval)
 	select {
 	case <-c.ctx.Done():
 		return
@@ -254,7 +233,7 @@ func (c *Crawler) Crawl() {
 		c.Cache[node.ID()] = struct{}{}
 		c.mu.Unlock()
 		//get node for crawl,the node never crawled
-		result, err := c.crawl(node, ctx, cancel)
+		result, err := c.crawl(node)
 		if err != nil {
 			c.logger.Error("crawl node failed", zap.Error(err))
 			return
@@ -279,7 +258,8 @@ func (c *Crawler) Crawl() {
 type nodes []*enode.Node //we will get nodes arr from chan and deal with it
 
 //crawl the node
-func (c *Crawler) crawl(node *enode.Node, ctx context.Context, cancel context.CancelFunc) ([]*enode.Node, error) {
+func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
+	var ctx, cancel = context.WithTimeout(context.Background(), RoundInterval)
 	var cache = make(map[enode.ID]*enode.Node) //cache the nodes
 	var res []*enode.Node
 	prk, _ := crypto.GenerateKey()
@@ -288,11 +268,10 @@ func (c *Crawler) crawl(node *enode.Node, ctx context.Context, cancel context.Ca
 	c.mu.Unlock()
 	conn := listen(ld, "") //bind the local node to the port
 	nodesChan := make(chan nodes, 16)
-
 	defer func() {
 		conn.Close()
 		cancel()
-		close(nodesChan)
+		time.Sleep(time.Second)
 		c.tokens <- struct{}{} //send token back for next worker
 		fmt.Println("finish work ,and the tokens length is", len(c.tokens))
 	}()
@@ -309,11 +288,11 @@ func (c *Crawler) crawl(node *enode.Node, ctx context.Context, cancel context.Ca
 	for {
 		select {
 		case <-ctx.Done():
+			close(nodesChan)
 			return res, nil
 		default:
 			//generate the random node
 			randomNodes := c.generateRandomNode()
-			var cnt int
 			for i := range randomNodes {
 				//send the findnode request and get the response
 				targetNode := randomNodes[i]
@@ -322,7 +301,12 @@ func (c *Crawler) crawl(node *enode.Node, ctx context.Context, cancel context.Ca
 					c.logger.Error("find node failed", zap.Error(err))
 					continue
 				}
-				findNodes := <-nodesChan //get the nodes from the chan
+			}
+			var findNodes nodes
+			select {
+			case <-ctx.Done():
+				return res, nil
+			case findNodes = <-nodesChan:
 				if findNodes != nil {
 					//send to the output channel
 					var end = true
@@ -333,12 +317,9 @@ func (c *Crawler) crawl(node *enode.Node, ctx context.Context, cancel context.Ca
 							cache[n.ID()] = n
 							res = append(res, n)
 						}
-						if end { //we get all duplicate nodes
-							cnt++
-						}
-						if cnt >= Threshold || len(res) >= MaxDHTSize {
-							return res, nil
-						}
+					}
+					if end || len(res) >= MaxDHTSize {
+						return res, nil
 					}
 				}
 			}
@@ -394,4 +375,27 @@ func (c *Crawler) generateRandomNode() []*enode.Node {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.leveldb.QuerySeeds(seedCount, 1<<63-1)
+}
+
+// saveNodes saves the nodes to the database.
+
+func (c *Crawler) saveNodes(buffer []*Node, statement *sql.Stmt) error {
+	//batch insert
+	if c.db == nil {
+		return fmt.Errorf("invalid database")
+	}
+	var err error
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction failed: %v", err)
+	}
+	for i := range buffer {
+		node := buffer[i]
+		_, err = tx.Stmt(statement).Exec(node.n.ID().String(), node.n.Seq(), node.AccessTime, node.n.IP().String())
+		if err != nil {
+			defer tx.Rollback()
+			return fmt.Errorf("exec sql statement failed: %v", err)
+		}
+	}
+	return tx.Commit()
 }
