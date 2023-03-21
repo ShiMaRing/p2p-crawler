@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/discover/v4wire"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
@@ -41,6 +40,7 @@ func (c *Crawler) Ping(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk 
 		c.counter.AddDataSizeSent(uint64(nbytes))
 		c.counter.AddSendNum()
 	}
+	time.Sleep(respTimeout)
 	return err
 }
 
@@ -68,6 +68,7 @@ func (c *Crawler) Pong(conn UDPConn, ld *enode.LocalNode, prk *ecdsa.PrivateKey,
 		c.counter.AddDataSizeSent(uint64(nbytes))
 		c.counter.AddSendNum()
 	}
+	time.Sleep(respTimeout)
 	return err
 }
 
@@ -98,6 +99,8 @@ func (c *Crawler) handleResponse(conn UDPConn) (*net.UDPAddr, v4wire.Packet, v4w
 		return from, rawpacket.(*v4wire.Neighbors), pubkey, hash, nil
 	case *v4wire.Ping:
 		return from, rawpacket.(*v4wire.Ping), pubkey, hash, nil
+	case *v4wire.ENRRequest:
+		return from, rawpacket.(*v4wire.ENRRequest), pubkey, hash, nil
 	default:
 		name := t.Name()
 		kind := t.Kind()
@@ -105,7 +108,7 @@ func (c *Crawler) handleResponse(conn UDPConn) (*net.UDPAddr, v4wire.Packet, v4w
 	}
 }
 
-func (c *Crawler) findNode(conn UDPConn, node *enode.Node, prk *ecdsa.PrivateKey, targetNode *enode.Node) ([]*enode.Node, error) {
+func (c *Crawler) findNode(conn UDPConn, node *enode.Node, prk *ecdsa.PrivateKey, targetNode *enode.Node) error {
 	pbkey := targetNode.Pubkey()
 	var e encPubkey
 	math.ReadBits(pbkey.X, e[:len(e)/2])
@@ -118,30 +121,14 @@ func (c *Crawler) findNode(conn UDPConn, node *enode.Node, prk *ecdsa.PrivateKey
 	}
 	packet, _, err := v4wire.Encode(prk, req)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("encode find node packet error %s", err))
+		return errors.New(fmt.Sprintf("encode find node packet error %s", err))
 	}
 	nbytes, err := conn.WriteToUDP(packet, &net.UDPAddr{IP: node.IP(), Port: node.UDP()})
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("send find node packet error %s", err))
+		return errors.New(fmt.Sprintf("send find node packet error %s", err))
 	}
 	c.counter.AddDataSizeSent(uint64(nbytes))
 	c.counter.AddSendNum()
 	time.Sleep(respTimeout)
-
-	_, neighbor, _, _, err := c.handleResponse(conn)
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("handle find node response error %s", err))
-	}
-	//get the neighbors
-	nodes := neighbor.(*v4wire.Neighbors).Nodes
-	res := make([]*enode.Node, 0)
-	for _, n := range nodes {
-		key, err := v4wire.DecodePubkey(crypto.S256(), n.ID)
-		if err != nil {
-			continue
-		}
-		n := enode.NewV4(key, n.IP, int(n.TCP), int(n.UDP))
-		res = append(res, n)
-	}
-	return res, nil
+	return nil
 }

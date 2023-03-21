@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"database/sql"
-	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/discover"
+	"github.com/ethereum/go-ethereum/p2p/discover/v4wire"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 	_ "github.com/go-sql-driver/mysql"
@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	RoundInterval = 60 * time.Second //crawl interval for each node
+	RoundInterval = 15 * time.Second //crawl interval for each node
 
 	DefaultTimeout    = 1 * time.Hour //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
@@ -27,6 +27,8 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	seedsCount        = 32
 	MaxDHTSize        = 17 * 16
+	Debug             = true
+	Threshold         = 5
 )
 
 type Crawler struct {
@@ -71,20 +73,27 @@ func NewCrawler(config Config) (*Crawler, error) {
 		if err != nil {
 			return nil, err
 		}
-		//add the nodes to the leveldb
-		ld, cfg := makeDiscoveryConfig(ldb, nodes)
-		conn := listen(ld, "")
-		defer func() {
-			conn.Close()
-		}()
-		v4, err := discover.ListenV4(conn, ld, cfg)
-		if err != nil {
-			return nil, err
+		for i := range nodes {
+			ldb.UpdateNode(nodes[i]) //update the node to the db
 		}
-		key, _ := crypto.GenerateKey()
-		pbkey := &key.PublicKey
-		nodes = v4.LookupPubkey(pbkey)
-
+		//add the nodes to the leveldb
+		if !Debug {
+			ld, cfg := makeDiscoveryConfig(ldb, nodes)
+			conn := listen(ld, "")
+			defer func() {
+				conn.Close()
+			}()
+			v4, err := discover.ListenV4(conn, ld, cfg)
+			if err != nil {
+				return nil, err
+			}
+			key, _ := crypto.GenerateKey()
+			pbkey := &key.PublicKey
+			nodes = v4.LookupPubkey(pbkey)
+		} else {
+			node, _ := parseNode("enode://0694c08573902a5daa723b255fe30bb47a74398c1837e9550f4aa1868116c2ee416df026fb9f1533891c1a2d6fbe3b49a6a11f533e200d26a668809f40e565e6@150.136.69.241:5050")
+			nodes = append(nodes, node)
+		}
 	} else {
 		//start from the database
 		ldb, err = enode.OpenDB(config.DbName)
@@ -113,7 +122,7 @@ func NewCrawler(config Config) (*Crawler, error) {
 		BootNodes: nodes,
 		Cache:     make(map[enode.ID]struct{}),
 		ReqCh:     reqCh,
-		tokens:    make(chan struct{}, config.Workers),
+		tokens:    make(chan struct{}, DefaultWorkers),
 		OutputCh:  outputCh,
 		leveldb:   ldb,
 		db:        db,
@@ -123,7 +132,7 @@ func NewCrawler(config Config) (*Crawler, error) {
 		cancel:    cancel,
 		Config:    config,
 	}
-	for i := 0; i < config.Workers; i++ {
+	for i := 0; i < DefaultWorkers; i++ {
 		crawler.tokens <- struct{}{}
 	}
 	return crawler, err
@@ -188,7 +197,10 @@ func (c *Crawler) daemon() {
 				c.Cache[node.n.ID()] = struct{}{} //add to the cache
 				c.ReqCh <- node.n                 //add to the reqch
 			}
-			fmt.Println("get node count:", c.counter.GetRecvNum())
+			fmt.Println("get node from the output", node.n.ID())
+			fmt.Println("the length of the reqch is ", len(c.ReqCh))
+			fmt.Println("the length of the cache is ", len(c.Cache))
+			fmt.Println("the length of the tokens is ", len(c.tokens))
 			c.mu.Unlock()
 			err := c.leveldb.UpdateNode(node.n)
 			if err != nil {
@@ -233,13 +245,7 @@ func (c *Crawler) saveNodes(buffer []*Node, statement *sql.Stmt) error {
 }
 
 func (c *Crawler) Crawl() {
-	defer func() {
-		c.tokens <- struct{}{} //send token back for next worker
-	}()
 	var ctx, cancel = context.WithTimeout(context.Background(), RoundInterval)
-	defer func() {
-		cancel()
-	}()
 	select {
 	case <-c.ctx.Done():
 		return
@@ -248,7 +254,7 @@ func (c *Crawler) Crawl() {
 		c.Cache[node.ID()] = struct{}{}
 		c.mu.Unlock()
 		//get node for crawl,the node never crawled
-		result, err := c.crawl(node, ctx)
+		result, err := c.crawl(node, ctx, cancel)
 		if err != nil {
 			c.logger.Error("crawl node failed", zap.Error(err))
 			return
@@ -270,8 +276,10 @@ func (c *Crawler) Crawl() {
 
 }
 
+type nodes []*enode.Node //we will get nodes arr from chan and deal with it
+
 //crawl the node
-func (c *Crawler) crawl(node *enode.Node, ctx context.Context) ([]*enode.Node, error) {
+func (c *Crawler) crawl(node *enode.Node, ctx context.Context, cancel context.CancelFunc) ([]*enode.Node, error) {
 	var cache = make(map[enode.ID]*enode.Node) //cache the nodes
 	var res []*enode.Node
 	prk, _ := crypto.GenerateKey()
@@ -279,10 +287,20 @@ func (c *Crawler) crawl(node *enode.Node, ctx context.Context) ([]*enode.Node, e
 	ld := enode.NewLocalNode(c.leveldb, prk)
 	c.mu.Unlock()
 	conn := listen(ld, "") //bind the local node to the port
+	nodesChan := make(chan nodes, 16)
+
 	defer func() {
 		conn.Close()
+		cancel()
+		close(nodesChan)
+		c.tokens <- struct{}{} //send token back for next worker
+		fmt.Println("finish work ,and the tokens length is", len(c.tokens))
 	}()
-	err := c.pingPong(conn, ld, node, prk)
+
+	go func() {
+		c.loop(conn, ctx, ld, prk, nodesChan)
+	}()
+	err := c.Ping(conn, ld, node, prk)
 	if err != nil {
 		c.logger.Error("ping pong failed", zap.Error(err))
 		return nil, err
@@ -295,14 +313,16 @@ func (c *Crawler) crawl(node *enode.Node, ctx context.Context) ([]*enode.Node, e
 		default:
 			//generate the random node
 			randomNodes := c.generateRandomNode()
+			var cnt int
 			for i := range randomNodes {
 				//send the findnode request and get the response
 				targetNode := randomNodes[i]
-				findNodes, err := c.findNode(conn, node, prk, targetNode)
+				err = c.findNode(conn, node, prk, targetNode)
 				if err != nil {
 					c.logger.Error("find node failed", zap.Error(err))
 					continue
 				}
+				findNodes := <-nodesChan //get the nodes from the chan
 				if findNodes != nil {
 					//send to the output channel
 					var end = true
@@ -313,7 +333,10 @@ func (c *Crawler) crawl(node *enode.Node, ctx context.Context) ([]*enode.Node, e
 							cache[n.ID()] = n
 							res = append(res, n)
 						}
-						if end || len(res) >= MaxDHTSize {
+						if end { //we get all duplicate nodes
+							cnt++
+						}
+						if cnt >= Threshold || len(res) >= MaxDHTSize {
 							return res, nil
 						}
 					}
@@ -321,30 +344,54 @@ func (c *Crawler) crawl(node *enode.Node, ctx context.Context) ([]*enode.Node, e
 			}
 		}
 	}
-	return nil, nil
 }
 
-func (c *Crawler) pingPong(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk *ecdsa.PrivateKey) error {
-	//ping pong
-	err := c.Ping(conn, ld, node, prk)
-	if err != nil {
-		return err
+//keep read the message from the connection, we will deal with the different message
+//
+func (c *Crawler) loop(conn UDPConn, ctx context.Context, ld *enode.LocalNode, prk *ecdsa.PrivateKey, nodesChan chan nodes) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			from, packet, _, hash, err := c.handleResponse(conn)
+			if err != nil {
+				return
+			}
+			switch packet.(type) {
+			case *v4wire.Ping:
+				//send pong
+				err = c.Pong(conn, ld, prk, packet, hash, from)
+				if err != nil {
+					c.logger.Error("pong failed", zap.Error(err))
+					continue
+				}
+			case *v4wire.Pong:
+				//we discard the pong message
+				continue
+			case *v4wire.ENRRequest:
+				//we discard the enr request message
+				continue
+			case *v4wire.Neighbors:
+				//we will read the neighbors message,and send to the channel
+				nodes := packet.(*v4wire.Neighbors).Nodes
+				res := make([]*enode.Node, 0)
+				for _, n := range nodes {
+					key, err := v4wire.DecodePubkey(crypto.S256(), n.ID)
+					if err != nil {
+						continue
+					}
+					n := enode.NewV4(key, n.IP, int(n.TCP), int(n.UDP))
+					res = append(res, n)
+				}
+				nodesChan <- res //send to the channel
+			}
+		}
 	}
-	time.Sleep(respTimeout) //wait for the response
-	from, packet, _, hash, err := c.handleResponse(conn)
-	if err != nil {
-		return errors.New("handle ping response failed with error: " + err.Error())
-	}
-	err = c.Pong(conn, ld, prk, packet, hash, from)
-	time.Sleep(respTimeout) //wait for the response
-	if err != nil {
-		return errors.New("send pong failed with error: " + err.Error())
-	}
-	return nil
 }
 
 func (c *Crawler) generateRandomNode() []*enode.Node {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.leveldb.QuerySeeds(seedCount, 24*time.Hour)
+	return c.leveldb.QuerySeeds(seedCount, 1<<63-1)
 }
