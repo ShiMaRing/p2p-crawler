@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"database/sql"
@@ -12,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
+	"os"
 	"sync"
 	"time"
 )
@@ -26,7 +28,7 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	seedsCount        = 32
 	MaxDHTSize        = 17 * 16
-	Debug             = true
+	Debug             = false
 )
 
 type Crawler struct {
@@ -48,6 +50,7 @@ type Crawler struct {
 
 	logger *zap.Logger // logger is the logger that the crawler uses to log the information.
 	Config             // config is the config that the crawler uses to store the state of the crawler.
+	writer *bufio.Writer
 }
 
 func NewCrawler(config Config) (*Crawler, error) {
@@ -138,14 +141,25 @@ func NewCrawler(config Config) (*Crawler, error) {
 
 // Boot starts the crawler.
 func (c *Crawler) Boot() error {
+
+	f, err := os.OpenFile("tmp.txt", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		c.logger.Error("open file error", zap.Error(err))
+		return err
+	}
+	c.writer = bufio.NewWriter(f)
 	//put start nodes to the reqch ,and start crawling
 	for i := range c.BootNodes {
 		c.ReqCh <- c.BootNodes[i]
+		c.writer.WriteString(c.BootNodes[i].String() + "\n")
 		//add the node to the cache
 		c.Cache[c.BootNodes[i].ID()] = struct{}{}
 	}
+
 	defer func() {
 		c.cancel()
+		c.writer.Flush()
+		f.Close()
 	}()
 	go func() {
 		//read output chan, and persistent the nodes or add to the reqch
@@ -165,6 +179,7 @@ func (c *Crawler) Boot() error {
 // Persistent persists the nodes to the database,which run in the background.
 func (c *Crawler) daemon() {
 	//save the nodes to the database
+	//create a file ,if exists, truncate it
 	buffer := make([]*Node, 0, DefaultChanelSize)
 	var err error
 	var statement *sql.Stmt
@@ -210,6 +225,7 @@ func (c *Crawler) daemon() {
 			if _, ok := c.Cache[node.n.ID()]; !ok {
 				c.Cache[node.n.ID()] = struct{}{} //add to the cache
 				c.ReqCh <- node.n                 //add to the reqch
+				c.writer.WriteString(node.n.String() + "\n")
 			}
 			c.mu.Unlock()
 			err := c.leveldb.UpdateNode(node.n)
