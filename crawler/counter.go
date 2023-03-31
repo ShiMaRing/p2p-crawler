@@ -6,16 +6,20 @@ import (
 	"time"
 )
 
+const (
+	KB = 1024
+	MB = KB * KB
+)
+
 // Counter records the package numbers we send and received
 // also records nodes number and time cost
 type Counter struct {
 	SendNum          int
 	RecvNum          int
 	NodesNum         int
-	ConnectAbleNodes int    //connectable nodes
-	dataSizeSended   uint64 //bytes
-	dataSizeReceived uint64 //data size received
-	TimeCost         time.Duration
+	ConnectAbleNodes int //connectable nodes
+	dataSizeSended   int //bytes
+	dataSizeReceived int //data size received
 	Rwlock           sync.RWMutex
 	StartTime        time.Time //start time we send the first package
 }
@@ -45,14 +49,14 @@ func (c *Counter) AddNodesNum() {
 func (c *Counter) AddDataSizeSent(size uint64) {
 	c.Rwlock.Lock()
 	defer c.Rwlock.Unlock()
-	c.dataSizeSended += size
+	c.dataSizeSended += int(size)
 }
 
 // AddDataSizeReceived add data size received
 func (c *Counter) AddDataSizeReceived(size uint64) {
 	c.Rwlock.Lock()
 	defer c.Rwlock.Unlock()
-	c.dataSizeReceived += size
+	c.dataSizeReceived += int(size)
 }
 
 //get functions for Counter
@@ -73,13 +77,13 @@ func (c *Counter) GetNodesNum() int {
 	defer c.Rwlock.RUnlock()
 	return c.NodesNum
 }
-func (c *Counter) GetDataSizeSended() uint64 {
+func (c *Counter) GetDataSizeSended() int {
 	c.Rwlock.RLock()
 	defer c.Rwlock.RUnlock()
 	return c.dataSizeSended
 }
 
-func (c *Counter) GetDataSizeReceived() uint64 {
+func (c *Counter) GetDataSizeReceived() int {
 	c.Rwlock.RLock()
 	defer c.Rwlock.RUnlock()
 	return c.dataSizeReceived
@@ -88,7 +92,39 @@ func (c *Counter) GetDataSizeReceived() uint64 {
 func (c *Counter) ToString() string {
 	c.Rwlock.RLock()
 	defer c.Rwlock.RUnlock()
-	return "sendNum: " + strconv.Itoa(c.SendNum) + " recvNum: " + strconv.Itoa(c.RecvNum) + " nodesNum: " +
-		" dataSizeReceived: " +
-		strconv.FormatUint(c.dataSizeReceived, 10)
+	return "sendNum:" + strconv.Itoa(c.SendNum) + "  recvNum:" + strconv.Itoa(c.RecvNum) + "  nodesNum:" + strconv.Itoa(c.NodesNum) +
+		"  connectable:" + strconv.Itoa(c.ConnectAbleNodes) + "  dataSizeSended:" + dataSize2String(c.dataSizeSended) +
+		"  dataSizeReceived:" + dataSize2String(c.dataSizeReceived)
+
+}
+
+func (c *Counter) GetStartTime() time.Time {
+	c.Rwlock.RLock()
+	defer c.Rwlock.RUnlock()
+	return c.StartTime
+}
+
+func (c *Counter) GetCostTime() time.Duration {
+	c.Rwlock.RLock()
+	defer c.Rwlock.RUnlock()
+	return time.Now().Sub(c.StartTime)
+}
+
+// AddConnectAbleNodes add connectable nodes
+func (c *Counter) AddConnectAbleNodes() {
+	c.Rwlock.Lock()
+	defer c.Rwlock.Unlock()
+	c.ConnectAbleNodes++
+}
+
+//GetConnectedCount get counter
+func (c *Counter) GetConnectedCount() int {
+	c.Rwlock.RLock()
+	defer c.Rwlock.RUnlock()
+	return c.ConnectAbleNodes
+}
+
+func dataSize2String(size int) string {
+	var res = float64(size) / MB
+	return strconv.FormatFloat(res, 'f', 2, 64) + "MB"
 }

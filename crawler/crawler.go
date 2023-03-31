@@ -28,16 +28,16 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	seedsCount        = 32
 	MaxDHTSize        = 17 * 16
-	Debug             = false
 )
 
 type Crawler struct {
 	BootNodes []*enode.Node         // BootNodes is the set of nodes that the crawler will start from.
 	Cache     map[enode.ID]struct{} // Cache is the set of nodes that the crawler is currently crawling,as a cache
+	tokens    chan struct{}         //tokens store token
 
 	ReqCh    chan *enode.Node // ReqCh is the channel that the crawler uses to send requests to the workers.
-	tokens   chan struct{}    //tokens store token
 	OutputCh chan *Node       // OutputCh is the channel that the crawler uses to send requests to the filter.
+	DHTCh    chan *enode.Node // DHTCh is the channel that the crawler uses to send requests to the DHT.
 
 	leveldb   *enode.DB          // leveldb is the database that the crawler uses to store the nodes.
 	db        *sql.DB            // db is the database that the crawler uses to store the nodes.
@@ -46,11 +46,12 @@ type Crawler struct {
 	ctx       context.Context    // ctx is the context that the crawler uses to cancel all crawl.
 	cancel    context.CancelFunc // cancel is the function that the crawler uses to cancel all crawl.
 
-	counter Counter
+	counter Counter //counter is the counter that the crawler uses to count the nodes.
 
 	logger *zap.Logger // logger is the logger that the crawler uses to log the information.
 	Config             // config is the config that the crawler uses to store the state of the crawler.
-	writer *bufio.Writer
+
+	writer *bufio.Writer //writer is the writer that the crawler uses to write the nodes to the file.
 }
 
 func NewCrawler(config Config) (*Crawler, error) {
@@ -75,25 +76,22 @@ func NewCrawler(config Config) (*Crawler, error) {
 			return nil, err
 		}
 		//add the nodes to the leveldb
-		if !Debug {
-			ld, cfg := makeDiscoveryConfig(ldb, nodes)
-			conn := listen(ld, "")
-			defer func() {
-				conn.Close()
-			}()
-			v4, err := discover.ListenV4(conn, ld, cfg)
-			if err != nil {
-				return nil, err
-			}
-			key, _ := crypto.GenerateKey()
-			pbkey := &key.PublicKey
-			nodes = v4.LookupPubkey(pbkey)
-		} else {
-			node, _ := parseNode("enode://dd6c825d6a07ceaacaf236673bb66c386e3cb33a00fcbb0d8ec633892fdcf7079376bfd7188a775471edd7a4259f3925fa4989ff9d889269e0b3addad552b742@38.242.129.221:30300")
-			nodes = append(nodes[:0], node)
+		ld, cfg := makeDiscoveryConfig(ldb, nodes)
+
+		conn := listen(ld, "")
+		defer func() {
+			conn.Close()
+		}()
+
+		v4, err := discover.ListenV4(conn, ld, cfg)
+		if err != nil {
+			return nil, err
 		}
+		key, _ := crypto.GenerateKey()
+		pbkey := &key.PublicKey
+		nodes = v4.LookupPubkey(pbkey)
 		for i := range nodes {
-			ldb.UpdateNode(nodes[i]) //update the node to the db
+			ldb.UpdateNode(nodes[i])
 		}
 	} else {
 		//start from the database
@@ -107,24 +105,30 @@ func NewCrawler(config Config) (*Crawler, error) {
 			nodes = tmp //change the start nodes  from the database
 		}
 	}
+
 	//create ctx
 	reqCh := make(chan *enode.Node, DefaultChanelSize)
+	dhtCh := make(chan *enode.Node, DefaultChanelSize)
 	outputCh := make(chan *Node, DefaultChanelSize)
+
 	var db *sql.DB
-	if config.IsSql == true {
+	if config.IsSql == true { //we need to store the nodes to the database
 		db, err = sql.Open("mysql", config.DatabaseUrl)
 		if err != nil {
 			return nil, err
 		}
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), config.TotalTimeout)
 	logger, _ := zap.NewProduction()
+
 	crawler := &Crawler{
 		BootNodes: nodes,
 		Cache:     make(map[enode.ID]struct{}),
 		ReqCh:     reqCh,
-		tokens:    make(chan struct{}, DefaultWorkers),
+		tokens:    make(chan struct{}, config.Workers),
 		OutputCh:  outputCh,
+		DHTCh:     dhtCh,
 		leveldb:   ldb,
 		db:        db,
 		ctx:       ctx,
@@ -134,25 +138,26 @@ func NewCrawler(config Config) (*Crawler, error) {
 		Config:    config,
 	}
 
-	for i := 0; i < DefaultWorkers; i++ {
+	//send the tokens to determine the number of workers parallel
+	for i := 0; i < config.Workers; i++ {
 		crawler.tokens <- struct{}{}
 	}
+
 	return crawler, err
 }
 
 // Boot starts the crawler.
 func (c *Crawler) Boot() error {
-
-	f, err := os.OpenFile("tmp.txt", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	f, err := os.OpenFile("record", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		c.logger.Error("open file error", zap.Error(err))
 		return err
 	}
 	c.writer = bufio.NewWriter(f)
+	c.counter.StartTime = time.Now()
 	//put start nodes to the reqch ,and start crawling
 	for i := range c.BootNodes {
 		c.ReqCh <- c.BootNodes[i]
-		c.writer.WriteString(c.BootNodes[i].String() + "\n")
 		//add the node to the cache
 		c.Cache[c.BootNodes[i].ID()] = struct{}{}
 	}
@@ -162,6 +167,7 @@ func (c *Crawler) Boot() error {
 		c.writer.Flush()
 		f.Close()
 	}()
+
 	go func() {
 		//read output chan, and persistent the nodes or add to the reqch
 		c.daemon()
@@ -184,14 +190,14 @@ func (c *Crawler) daemon() {
 	buffer := make([]*Node, 0, DefaultChanelSize)
 	var err error
 	var statement *sql.Stmt
-	if c.IsSql {
+	if c.IsSql { //we need to store the nodes to the sql database
 		statement, err = c.db.Prepare(`replace into nodes (id,seq,access_time,address) values (?,?,?,?,?)`)
 		if err != nil {
 			c.logger.Fatal("prepare sql statement failed", zap.Error(err))
 		}
 		defer statement.Close()
 	}
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(2 * time.Second) //every 2 seconds, we output the nodes to the file
 	go func() {
 		for {
 			select {
@@ -200,7 +206,7 @@ func (c *Crawler) daemon() {
 				return
 			case <-ticker.C:
 				c.mu.Lock()
-				fmt.Println("get nodes count:", len(c.Cache))
+				fmt.Println(c.counter.ToString()) //print the counter
 				c.mu.Unlock()
 			}
 		}
@@ -221,18 +227,7 @@ func (c *Crawler) daemon() {
 			}
 			return
 		case node := <-c.OutputCh:
-			c.mu.Lock()
-			//we did not crawl the node,so we should add it to the reqch
-			if _, ok := c.Cache[node.n.ID()]; !ok {
-				c.Cache[node.n.ID()] = struct{}{} //add to the cache
-				c.ReqCh <- node.n                 //add to the reqch
-				c.writer.WriteString(node.n.String() + "\n")
-			}
-			c.mu.Unlock()
-			err := c.leveldb.UpdateNode(node.n)
-			if err != nil {
-				c.logger.Error("save nodes to leveldb failed", zap.Error(err))
-			}
+			//we need to deal with the node info and save it to the mysql database
 			if !c.IsSql {
 				continue
 			}
@@ -244,6 +239,19 @@ func (c *Crawler) daemon() {
 				}
 				buffer = buffer[:0]
 			}
+		case node := <-c.DHTCh: //add the node to the reqch back
+			c.mu.Lock()
+			err = c.leveldb.UpdateNode(node)
+			if err != nil {
+				c.logger.Error("save nodes to leveldb failed", zap.Error(err))
+			}
+			//we did not crawl the node,so we should add it to the reqch
+			if _, ok := c.Cache[node.ID()]; !ok {
+				c.Cache[node.ID()] = struct{}{} //add to the cache
+				c.ReqCh <- node                 //add to the reqch
+				c.writer.WriteString(node.String() + "\n")
+			}
+			c.mu.Unlock()
 		}
 	}
 }
@@ -257,26 +265,34 @@ func (c *Crawler) Crawl() {
 		c.Cache[node.ID()] = struct{}{}
 		c.mu.Unlock()
 		//get node for crawl,the node never crawled
+		myNode := &Node{
+			n:          node,
+			Seq:        node.Seq(),
+			Address:    node.IP(),
+			ID:         node.ID(),
+			AccessTime: time.Now(),
+		}
 		result, err := c.crawl(node)
 		if err != nil {
 			c.logger.Error("crawl node failed", zap.Error(err))
-			return
 		}
 		if result != nil {
 			for i := range result {
-				node := result[i]
-				n := &Node{
-					ID:         node.ID(),
-					Seq:        node.Seq(),
-					AccessTime: time.Now(),
-					Address:    node.IP(),
-					n:          node,
-				}
-				c.OutputCh <- n
+				c.DHTCh <- result[i] //add the node to the dhtch
 			}
-		}
-	}
+			myNode.NeighborsCount = len(result)
+			myNode.ConnectAble = true
+			c.counter.AddConnectAbleNodes() //add the connectable nodes
+			//TODO: try get client info
 
+		} else {
+			myNode.ConnectAble = false
+
+		}
+		//TODO: get the country and city from ip address
+		c.counter.AddNodesNum()
+		c.OutputCh <- myNode //add the node to the outputch
+	}
 }
 
 type nodes []*enode.Node //we will get nodes arr from chan and deal with it
@@ -411,17 +427,12 @@ func (c *Crawler) saveNodes(buffer []*Node, statement *sql.Stmt) error {
 		return fmt.Errorf("invalid database")
 	}
 	var err error
-	tx, err := c.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction failed: %v", err)
-	}
 	for i := range buffer {
 		node := buffer[i]
-		_, err = tx.Stmt(statement).Exec(node.n.ID().String(), node.n.Seq(), node.AccessTime, node.n.IP().String())
+		_, err = statement.Exec(node.n.ID().String(), node.n.Seq(), node.AccessTime, node.n.IP().String())
 		if err != nil {
-			defer tx.Rollback()
 			return fmt.Errorf("exec sql statement failed: %v", err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }

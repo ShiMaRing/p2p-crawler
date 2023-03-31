@@ -17,6 +17,9 @@ type Node struct {
 	ConnectAble    bool      `json:"connectAble"`       // The node is connectable or not
 	NeighborsCount int       `json:"neighborsCount"`    // The number of neighbors of the node
 
+	Country string `json:"country"` // The country of the node
+	City    string `json:"city"`    // The city of the node
+
 	n          *enode.Node // The node
 	clientInfo *clientInfo // The node's client info
 }
