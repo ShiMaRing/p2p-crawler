@@ -28,6 +28,7 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	seedsCount        = 32
 	MaxDHTSize        = 17 * 16
+	Threshold         = 4
 )
 
 type Crawler struct {
@@ -342,6 +343,7 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 				}
 			}
 			var findNodes nodes
+			var count = 0
 			select {
 			case <-ctx.Done():
 				return res, nil
@@ -357,7 +359,10 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 							res = append(res, n)
 						}
 					}
-					if end || len(res) >= MaxDHTSize {
+					if end { //we get all same nodes we have crawled
+						count++
+					}
+					if count >= Threshold || len(res) >= MaxDHTSize {
 						return res, nil
 					}
 				}
