@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"database/sql"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/discover/v4wire"
@@ -20,8 +21,8 @@ import (
 )
 
 const (
-	RoundInterval     = 8 * time.Second //crawl interval for each node
-	DefaultTimeout    = 1 * time.Hour   //check interval for all nodes
+	RoundInterval     = 10 * time.Second //crawl interval for each node
+	DefaultTimeout    = 1 * time.Hour    //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
 	DefaultChanelSize = 512
 	bondExpiration    = 2 * time.Hour
@@ -47,6 +48,8 @@ type Crawler struct {
 	mu        sync.Mutex         // mu is the mutex that protects the crawler.
 	ctx       context.Context    // ctx is the context that the crawler uses to cancel all crawl.
 	cancel    context.CancelFunc // cancel is the function that the crawler uses to cancel all crawl.
+
+	genesis *core.Genesis // genesis is the genesis block that the crawler uses to verify the nodes.
 
 	counter Counter //counter is the counter that the crawler uses to count the nodes.
 
@@ -124,7 +127,7 @@ func NewCrawler(config Config) (*Crawler, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.TotalTimeout)
 	logger, _ := zap.NewProduction()
 
-	geoipDB, err := geoip2.Open("../db/GeoLite2-City.mmdb")
+	geoipDB, err := geoip2.Open("db/GeoLite2-City.mmdb")
 
 	crawler := &Crawler{
 		BootNodes: nodes,
@@ -141,6 +144,7 @@ func NewCrawler(config Config) (*Crawler, error) {
 		cancel:    cancel,
 		Config:    config,
 		geoipDB:   geoipDB,
+		genesis:   makeGenesis(),
 	}
 
 	if err != nil {
@@ -298,7 +302,6 @@ func (c *Crawler) Crawl() {
 			myNode.ConnectAble = false
 
 		}
-
 		//feat: get the country and city from ip address
 		country, city, err := c.geoSearch(node.IP())
 		if err == nil {
