@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/oschwald/geoip2-golang"
 	"log"
 	"net"
 	"os"
@@ -88,7 +89,7 @@ func TestFindNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = Ping(conn, ld, node, prk)
+	err = Pingg(conn, ld, node, prk)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestFindNode(t *testing.T) {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	err = Pong(conn, ld, prk, p, hash, from)
+	err = Pongg(conn, ld, prk, p, hash, from)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +234,7 @@ func handleResponse(conn UDPConn) (*net.UDPAddr, v4wire.Packet, v4wire.Pubkey, [
 		return nil, nil, [64]byte{}, nil, errors.New(fmt.Sprintf("unknown packet type %s %d", name, kind))
 	}
 }
-func Ping(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk *ecdsa.PrivateKey) error {
+func Pingg(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk *ecdsa.PrivateKey) error {
 	toaddr := &net.UDPAddr{IP: node.IP(), Port: node.UDP()}
 	n := ld.Node()
 	a := &net.UDPAddr{IP: n.IP(), Port: n.UDP()}
@@ -256,7 +257,7 @@ func Ping(conn UDPConn, ld *enode.LocalNode, node *enode.Node, prk *ecdsa.Privat
 }
 
 //send a pong back
-func Pong(conn UDPConn, ld *enode.LocalNode, prk *ecdsa.PrivateKey,
+func Pongg(conn UDPConn, ld *enode.LocalNode, prk *ecdsa.PrivateKey,
 	tmp v4wire.Packet, mac []byte, from *net.UDPAddr) error {
 	// Reply.
 	req := tmp.(*v4wire.Ping)
@@ -273,4 +274,22 @@ func Pong(conn UDPConn, ld *enode.LocalNode, prk *ecdsa.PrivateKey,
 	}
 	_, err = conn.WriteToUDP(packet, from)
 	return err
+}
+
+func TestGeo(t *testing.T) {
+	//get the ip
+	geoipDB, err := geoip2.Open("../db/GeoLite2-City.mmdb")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer geoipDB.Close()
+	ip1 := net.ParseIP("135.181.215.116")
+	/*	ip2 := net.ParseIP("135.181.215.116")
+		ip3 := net.ParseIP("5.135.139.201")*/
+	city, err := geoipDB.City(ip1)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Println(city.Country.Names["en"])
+
 }

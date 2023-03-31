@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/oschwald/geoip2-golang"
 	"go.uber.org/zap"
 	"os"
 	"sync"
@@ -52,7 +53,8 @@ type Crawler struct {
 	logger *zap.Logger // logger is the logger that the crawler uses to log the information.
 	Config             // config is the config that the crawler uses to store the state of the crawler.
 
-	writer *bufio.Writer //writer is the writer that the crawler uses to write the nodes to the file.
+	writer  *bufio.Writer  //writer is the writer that the crawler uses to write the nodes to the file.
+	geoipDB *geoip2.Reader //geoipDB is the database that the crawler uses to get the country and city from ip address.
 }
 
 func NewCrawler(config Config) (*Crawler, error) {
@@ -70,7 +72,6 @@ func NewCrawler(config Config) (*Crawler, error) {
 			return nil, fmt.Errorf("invalid bootstrap node: %v", err)
 		}
 	}
-
 	if config.IsPersistent == false {
 		ldb, err = enode.OpenDB("")
 		if err != nil {
@@ -123,6 +124,8 @@ func NewCrawler(config Config) (*Crawler, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.TotalTimeout)
 	logger, _ := zap.NewProduction()
 
+	geoipDB, err := geoip2.Open("../db/GeoLite2-City.mmdb")
+
 	crawler := &Crawler{
 		BootNodes: nodes,
 		Cache:     make(map[enode.ID]struct{}),
@@ -137,8 +140,12 @@ func NewCrawler(config Config) (*Crawler, error) {
 		tableName: config.TableName,
 		cancel:    cancel,
 		Config:    config,
+		geoipDB:   geoipDB,
 	}
 
+	if err != nil {
+		return nil, err
+	}
 	//send the tokens to determine the number of workers parallel
 	for i := 0; i < config.Workers; i++ {
 		crawler.tokens <- struct{}{}
@@ -166,6 +173,7 @@ func (c *Crawler) Boot() error {
 	defer func() {
 		c.cancel()
 		c.writer.Flush()
+		c.geoipDB.Close()
 		f.Close()
 	}()
 
@@ -290,7 +298,13 @@ func (c *Crawler) Crawl() {
 			myNode.ConnectAble = false
 
 		}
-		//TODO: get the country and city from ip address
+
+		//feat: get the country and city from ip address
+		country, city, err := c.geoSearch(node.IP())
+		if err == nil {
+			myNode.Country = country
+			myNode.City = city
+		}
 		c.counter.AddNodesNum()
 		c.OutputCh <- myNode //add the node to the outputch
 	}
