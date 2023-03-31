@@ -133,6 +133,7 @@ func NewCrawler(config Config) (*Crawler, error) {
 		cancel:    cancel,
 		Config:    config,
 	}
+
 	for i := 0; i < DefaultWorkers; i++ {
 		crawler.tokens <- struct{}{}
 	}
@@ -374,6 +375,9 @@ func (c *Crawler) loop(conn UDPConn, ctx context.Context, ld *enode.LocalNode, p
 				continue
 			case *v4wire.ENRRequest:
 				//we discard the enr request message
+				continue
+			case *v4wire.ENRResponse:
+				//we discard the enr response message
 				continue
 			case *v4wire.Neighbors:
 				//we will read the neighbors message,and send to the channel

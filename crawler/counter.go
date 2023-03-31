@@ -12,6 +12,7 @@ type Counter struct {
 	SendNum          int
 	RecvNum          int
 	NodesNum         int
+	ConnectAbleNodes int    //connectable nodes
 	dataSizeSended   uint64 //bytes
 	dataSizeReceived uint64 //data size received
 	TimeCost         time.Duration
