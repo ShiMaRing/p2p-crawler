@@ -67,11 +67,6 @@ func getClientInfo(genesis *core.Genesis, networkID uint64, nodeURL string, n *e
 		return nil, errors.Wrap(err, "cannot set conn deadline")
 	}
 
-	s := getStatus(genesis.Config, uint32(conn.negotiatedProtoVersion), genesis.ToBlock().Hash(), networkID, nodeURL)
-	if err = conn.Write(s); err != nil {
-		return nil, err
-	}
-
 	// Regardless of whether we wrote a status message or not, the remote side
 	// might still send us one.
 
@@ -94,21 +89,16 @@ func dial(n *enode.Node) (*Conn, *ecdsa.PrivateKey, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-
 	conn.Conn = rlpx.NewConn(fd, n.Pubkey())
-
 	if err = conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
 		return nil, nil, errors.Wrap(err, "cannot set conn deadline")
 	}
-
 	// do encHandshake
 	ourKey, _ := crypto.GenerateKey()
-
 	_, err = conn.Handshake(ourKey)
 	if err != nil {
 		return nil, nil, err
 	}
-
 	return &conn, ourKey, nil
 }
 
@@ -122,6 +112,7 @@ func writeHello(conn *Conn, priv *ecdsa.PrivateKey) error {
 			{Name: "eth", Version: 64},
 			{Name: "eth", Version: 65},
 			{Name: "eth", Version: 66},
+			{Name: "eth", Version: 67},
 			{Name: "les", Version: 2},
 			{Name: "les", Version: 3},
 			{Name: "les", Version: 4},
@@ -146,11 +137,11 @@ func readHello(conn *Conn, info *clientInfo) error {
 		info.SoftwareVersion = msg.Version
 		info.ClientType = msg.Name
 	case *Disconnect:
-		return fmt.Errorf("bad hello handshake: %v", msg.Reason.Error())
+		return fmt.Errorf("bad hello handshake-1: %v", msg.Reason.Error())
 	case *Error:
-		return fmt.Errorf("bad hello handshake: %v", msg.Error())
+		return fmt.Errorf("bad hello handshake-2: %v", msg.Error())
 	default:
-		return fmt.Errorf("bad hello handshake: %v", msg.Code())
+		return fmt.Errorf("bad hello handshake-3: %v", msg.Code())
 	}
 
 	conn.negotiateEthProtocol(info.Capabilities)

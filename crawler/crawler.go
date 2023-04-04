@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/discover/v4wire"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/params"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/oschwald/geoip2-golang"
@@ -24,13 +25,13 @@ const (
 	RoundInterval     = 30 * time.Second //crawl interval for each node
 	DefaultTimeout    = 1 * time.Hour    //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
-	DefaultChanelSize = 512
+	DefaultChanelSize = 2048
 	bondExpiration    = 2 * time.Hour
 	seedCount         = 30
 	seedMaxAge        = 5 * 24 * time.Hour
 	seedsCount        = 32
 	MaxDHTSize        = 17 * 16
-	Threshold         = 2
+	Threshold         = 1
 )
 
 type Crawler struct {
@@ -363,9 +364,12 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 		return nil, fmt.Errorf("invalid ID in response record")
 	}
 
-	if newRecord.Seq() >= node.Seq() {
+	//whether we need to update the node info
+	if newRecord.Seq() > node.Seq() {
 		//update node
-		*node = *newRecord //update the node
+		if err := netutil.CheckRelayIP(node.IP(), newRecord.IP()); err == nil {
+			*node = *newRecord
+		}
 	}
 
 	//we try to crawl the DHT table
