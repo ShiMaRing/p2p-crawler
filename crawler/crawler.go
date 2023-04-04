@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	RoundInterval     = 10 * time.Second //crawl interval for each node
+	RoundInterval     = 30 * time.Second //crawl interval for each node
 	DefaultTimeout    = 1 * time.Hour    //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
 	DefaultChanelSize = 512
@@ -30,7 +30,7 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	seedsCount        = 32
 	MaxDHTSize        = 17 * 16
-	Threshold         = 4
+	Threshold         = 2
 )
 
 type Crawler struct {
@@ -240,6 +240,10 @@ func (c *Crawler) daemon() {
 			}
 			return
 		case node := <-c.OutputCh:
+
+			if node.ConnectAble {
+				c.writer.WriteString(node.n.String() + "\n")
+			}
 			//we need to deal with the node info and save it to the mysql database
 			if !c.IsSql {
 				continue
@@ -262,7 +266,6 @@ func (c *Crawler) daemon() {
 			if _, ok := c.Cache[node.ID()]; !ok {
 				c.Cache[node.ID()] = struct{}{} //add to the cache
 				c.ReqCh <- node                 //add to the reqch
-				c.writer.WriteString(node.String() + "\n")
 			}
 			c.mu.Unlock()
 		}
@@ -278,6 +281,9 @@ func (c *Crawler) Crawl() {
 		c.Cache[node.ID()] = struct{}{}
 		c.mu.Unlock()
 		//get node for crawl,the node never crawled
+
+		result, err := c.crawl(node) //we also updated the node info
+
 		myNode := &Node{
 			n:          node,
 			Seq:        node.Seq(),
@@ -285,7 +291,6 @@ func (c *Crawler) Crawl() {
 			ID:         node.ID(),
 			AccessTime: time.Now(),
 		}
-		result, err := c.crawl(node)
 		if err != nil {
 			c.logger.Error("crawl node failed", zap.Error(err))
 		}
@@ -297,6 +302,7 @@ func (c *Crawler) Crawl() {
 			myNode.ConnectAble = true
 			c.counter.AddConnectAbleNodes() //add the connectable nodes
 			//TODO: try get client info
+			//try to get enr info
 
 		} else {
 			myNode.ConnectAble = false
@@ -326,21 +332,42 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 	c.mu.Unlock()
 	conn := listen(ld, "") //bind the local node to the port
 	nodesChan := make(chan nodes, 32)
+	enrChan := make(chan *enode.Node, 1)
 	defer func() {
 		conn.Close()
 		cancel()
 		time.Sleep(500 * time.Millisecond)
+		close(enrChan)
 		c.tokens <- struct{}{} //send token back for next worker
 	}()
-
 	go func() {
-		c.loop(conn, ctx, ld, prk, nodesChan)
+		c.loop(conn, ctx, ld, prk, nodesChan, enrChan)
 	}()
 	err := c.Ping(conn, ld, node, prk)
 	if err != nil {
 		c.logger.Error("ping pong failed", zap.Error(err))
 		return nil, err
 	}
+	err = c.getENR(conn, node, prk)
+	if err != nil {
+		c.logger.Error("get enr failed", zap.Error(err))
+		return nil, err
+	}
+	newRecord := <-enrChan //get new node info from the enrChan
+	if newRecord == nil {
+		c.logger.Error("get enr failed", zap.String("node", node.String()))
+		return nil, fmt.Errorf("get enr failed: %s", node.String())
+	}
+	//check the record is correct
+	if newRecord.ID() != node.ID() {
+		return nil, fmt.Errorf("invalid ID in response record")
+	}
+
+	if newRecord.Seq() >= node.Seq() {
+		//update node
+		*node = *newRecord //update the node
+	}
+
 	//we try to crawl the DHT table
 	for {
 		select {
@@ -390,7 +417,8 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 
 //keep read the message from the connection, we will deal with the different message
 //
-func (c *Crawler) loop(conn UDPConn, ctx context.Context, ld *enode.LocalNode, prk *ecdsa.PrivateKey, nodesChan chan nodes) {
+func (c *Crawler) loop(conn UDPConn, ctx context.Context, ld *enode.LocalNode,
+	prk *ecdsa.PrivateKey, nodesChan chan nodes, enrChan chan *enode.Node) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -415,7 +443,15 @@ func (c *Crawler) loop(conn UDPConn, ctx context.Context, ld *enode.LocalNode, p
 				//we discard the enr request message
 				continue
 			case *v4wire.ENRResponse:
-				//we discard the enr response message
+				//we send it to channel
+				respN, err := enode.New(enode.ValidSchemes, &packet.(*v4wire.ENRResponse).Record)
+				if err != nil {
+					c.logger.Error("new enr failed", zap.Error(err))
+					enrChan <- nil //send nil to the channel
+					return
+				}
+				//send the enr to the channel
+				enrChan <- respN
 				continue
 			case *v4wire.Neighbors:
 				//we will read the neighbors message,and send to the channel

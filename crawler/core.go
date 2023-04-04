@@ -101,6 +101,8 @@ func (c *Crawler) handleResponse(conn UDPConn) (*net.UDPAddr, v4wire.Packet, v4w
 		return from, rawpacket.(*v4wire.Ping), pubkey, hash, nil
 	case *v4wire.ENRRequest:
 		return from, rawpacket.(*v4wire.ENRRequest), pubkey, hash, nil
+	case *v4wire.ENRResponse:
+		return from, rawpacket.(*v4wire.ENRResponse), pubkey, hash, nil
 	default:
 		name := t.Name()
 		kind := t.Kind()
@@ -130,5 +132,26 @@ func (c *Crawler) findNode(conn UDPConn, node *enode.Node, prk *ecdsa.PrivateKey
 	c.counter.AddDataSizeSent(uint64(nbytes))
 	c.counter.AddSendNum()
 	time.Sleep(respTimeout)
+	return nil
+}
+
+func (c *Crawler) getENR(conn UDPConn, node *enode.Node, prk *ecdsa.PrivateKey) error {
+	//we need to get the ENR from the node
+	toaddr := &net.UDPAddr{IP: node.IP(), Port: node.UDP()}
+	req := &v4wire.ENRRequest{
+		Expiration: uint64(time.Now().Add(expiration).Unix()),
+	}
+	packet, _, err := v4wire.Encode(prk, req)
+	if err != nil {
+		return err
+	}
+	nbytes, err := conn.WriteToUDP(packet, toaddr)
+	if err == nil {
+		c.counter.AddDataSizeSent(uint64(nbytes))
+		c.counter.AddSendNum()
+	}
+	time.Sleep(respTimeout)
+	//wait for the response
+	//we successfully send the ENR request
 	return nil
 }
