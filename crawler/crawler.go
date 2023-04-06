@@ -26,10 +26,8 @@ const (
 	DefaultTimeout    = 1 * time.Hour    //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
 	DefaultChanelSize = 2048
-	bondExpiration    = 2 * time.Hour
 	seedCount         = 30
 	seedMaxAge        = 5 * 24 * time.Hour
-	seedsCount        = 32
 	MaxDHTSize        = 17 * 16
 	Threshold         = 1
 )
@@ -302,12 +300,13 @@ func (c *Crawler) Crawl() {
 			myNode.NeighborsCount = len(result)
 			myNode.ConnectAble = true
 			c.counter.AddConnectAbleNodes() //add the connectable nodes
-			//TODO: try get client info
-			//try to get enr info
-
+			info, err := getClientInfo(makeGenesis(), 1, myNode.n)
+			if err != nil {
+				c.logger.Error("get client info failed", zap.Error(err))
+			}
+			myNode.clientInfo = info
 		} else {
 			myNode.ConnectAble = false
-
 		}
 		//feat: get the country and city from ip address
 		country, city, err := c.geoSearch(node.IP())

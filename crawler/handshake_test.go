@@ -1,33 +1,47 @@
 package crawler
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/forkid"
+	"github.com/ethereum/go-ethereum/p2p/enode"
+	"os"
 	"testing"
 )
 
+//enr:-Iu4QNxBzixRZQmhdBq3wfVwh4PsJxfJ7uIyMnFBekszct6New2OmxRFYklXdm8SQ00ihBoWsx_-vxJ8NEculHf0LNEBgmlkgnY0gmlwhJ_E6LuJc2VjcDI1NmsxoQJH3HAzcSWwTYFkfbdQVlY6g39VrwFZ9myvmUvdq-A0GYN0Y3CCdmCDdWRwgnZg
 func TestGetClientInfo(t *testing.T) {
-	nodeUrl := "enode://901b084f050a1e08c46c670b56f41df00f4f697886b2b4cace59b5f36428e65bb76f16fb3cb44338ce8309df589467c7ad26ba32c9a31abc713b4e5d5698f599@86.48.19.175:30303"
-	target, _ := parseNode(nodeUrl)
-	//get information from the node
-
-	info, err := getClientInfo(makeGenesis(), 1, "", target)
-	if err != nil {
-		t.Fatal(err)
+	f, err2 := os.Open("../record")
+	if err2 != nil {
+		panic(err2)
 	}
-	marshal, err := json.Marshal(info)
-	if err != nil {
-		t.Fatal(err)
+	reader := bufio.NewReader(f)
+	for i := 0; i < 100; i++ {
+		bytes, err2 := reader.ReadBytes('\n')
+		if err2 != nil {
+			panic(err2)
+		}
+		node := getNode(string(bytes))
+		info, err := getClientInfo(makeGenesis(), 1, node)
+		if err != nil {
+			t.Logf("err: %v", err)
+			continue
+		}
+		marshal, err := json.Marshal(info)
+		if err != nil {
+			continue
+		}
+		fmt.Println(string(marshal))
 	}
-	s := info.TotalDifficulty.String()
-	fmt.Println(s)
-	fmt.Println("client info: ", string(marshal))
-
 }
 
-var myFilter = func(id forkid.ID) error {
-	return nil
+func getNode(s string) *enode.Node {
+	node := new(enode.Node)
+	err := node.UnmarshalText([]byte(s))
+	if err != nil {
+		panic(err)
+	}
+	return node
 }
 
 func TestPeerInfo(t *testing.T) {

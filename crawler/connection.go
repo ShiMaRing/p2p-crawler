@@ -3,6 +3,7 @@ package crawler
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"github.com/ethereum/go-ethereum/common"
 
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -16,6 +17,12 @@ type Message interface {
 
 type Error struct {
 	err error
+}
+
+// HashOrNumber is a combined field for specifying an origin block.
+type HashOrNumber struct {
+	Hash   common.Hash // Block hash from which to retrieve headers (excludes Number)
+	Number uint64      // Block hash from which to retrieve headers (excludes Hash)
 }
 
 func (e *Error) Unwrap() error  { return e.err }
