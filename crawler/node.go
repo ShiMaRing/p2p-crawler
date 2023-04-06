@@ -21,7 +21,7 @@ type Node struct {
 	City    string `json:"city"`    // The city of the node
 
 	n          *enode.Node // The node
-	clientInfo *clientInfo // The node's client info
+	ClientInfo *ClientInfo // The node's client info
 }
 
 // GetEnodeV4 get all nodes from this node

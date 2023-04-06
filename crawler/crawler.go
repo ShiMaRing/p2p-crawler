@@ -22,14 +22,15 @@ import (
 )
 
 const (
-	RoundInterval     = 24 * time.Second //crawl interval for each node
+	RoundInterval     = 30 * time.Second //crawl interval for each node
 	DefaultTimeout    = 30 * time.Minute //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
-	DefaultChanelSize = 512
+	DefaultChanelSize = 1024
 	seedCount         = 64
 	seedMaxAge        = 5 * 24 * time.Hour
 	MaxDHTSize        = 17 * 16
-	Threshold         = 2
+	Threshold         = 5
+	StartRound        = 10
 )
 
 type Crawler struct {
@@ -91,12 +92,25 @@ func NewCrawler(config Config) (*Crawler, error) {
 		if err != nil {
 			return nil, err
 		}
-		key, _ := crypto.GenerateKey()
-		pbkey := &key.PublicKey
-		nodes = v4.LookupPubkey(pbkey)
+		group := &sync.WaitGroup{}
+		lock := sync.Mutex{}
+		nodes := make([]*enode.Node, 0)
+		for i := 0; i < StartRound; i++ {
+			group.Add(1)
+			go func() {
+				defer group.Done()
+				key, _ := crypto.GenerateKey()
+				pbkey := &key.PublicKey
+				lock.Lock()
+				nodes = append(nodes, v4.LookupPubkey(pbkey)...)
+				lock.Unlock()
+			}()
+		}
+		group.Wait()
 		for i := range nodes {
 			ldb.UpdateNode(nodes[i])
 		}
+
 	} else {
 		//start from the database
 		ldb, err = enode.OpenDB(config.DbName)
@@ -184,11 +198,13 @@ func (c *Crawler) Boot() error {
 		//read output chan, and persistent the nodes or add to the reqch
 		c.daemon()
 	}()
+
 	for {
 		select {
 		case <-c.ctx.Done(): //time out ,break it
 			return nil
 		case <-c.tokens: //wait for token
+			fmt.Println("get token, and left:", len(c.tokens))
 			go c.Crawl()
 		}
 	}
@@ -203,7 +219,7 @@ func (c *Crawler) daemon() {
 	var err error
 	var statement *sql.Stmt
 	if c.IsSql { //we need to store the nodes to the sql database
-		statement, err = c.db.Prepare(`replace into nodes (id,seq,access_time,address) values (?,?,?,?,?)`)
+		statement, err = c.db.Prepare(`insert into nodes (id,seq,access_time,address) values (?,?,?,?,?)`)
 		if err != nil {
 			c.logger.Fatal("prepare sql statement failed", zap.Error(err))
 		}
@@ -297,7 +313,7 @@ func (c *Crawler) Crawl() {
 			c.counter.AddConnectAbleNodes() //add the connectable nodes
 			info, err := getClientInfo(makeGenesis(), 1, myNode.n)
 			if err == nil && info != nil {
-				myNode.clientInfo = info
+				myNode.ClientInfo = info
 				c.counter.AddClientInfoCount() //add the client info count
 				if info.NetworkID == 1 {
 					c.counter.AddEthNodesCount() //add the eth nodes count
@@ -331,16 +347,15 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 	conn := listen(ld, "") //bind the local node to the port
 	nodesChan := make(chan nodes, 32)
 	enrChan := make(chan *enode.Node, 32)
-	wg := &sync.WaitGroup{}
 
 	defer func() {
 		c.tokens <- struct{}{} //send token back for next worker
-		wg.Wait()
 		conn.Close()
 		cancel()
 		time.Sleep(500 * time.Millisecond)
 		close(enrChan)
 	}()
+
 	go func() {
 		c.loop(conn, ctx, ld, prk, nodesChan, enrChan)
 	}()
@@ -354,10 +369,8 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 		c.logger.Error("get enr failed", zap.Error(err))
 		return nil, err
 	}
-	wg.Add(1)
 
 	go func() {
-		defer wg.Done()
 		var newRecord *enode.Node
 		select {
 		case <-ctx.Done():

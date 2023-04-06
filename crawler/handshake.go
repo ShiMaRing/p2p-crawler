@@ -24,7 +24,7 @@ var (
 	lastStatusUpdate time.Time
 )
 
-type clientInfo struct {
+type ClientInfo struct {
 	ClientType      string
 	SoftwareVersion uint64
 	Capabilities    []p2p.Cap
@@ -35,8 +35,8 @@ type clientInfo struct {
 	HeadHash        common.Hash
 }
 
-func getClientInfo(genesis *core.Genesis, networkID uint64, n *enode.Node) (*clientInfo, error) {
-	var info clientInfo
+func getClientInfo(genesis *core.Genesis, networkID uint64, n *enode.Node) (*ClientInfo, error) {
+	var info ClientInfo
 
 	conn, sk, err := dial(n)
 	if err != nil {
@@ -137,7 +137,7 @@ func writeHello(conn *Conn, priv *ecdsa.PrivateKey) error {
 	return conn.Write(h)
 }
 
-func readHello(conn *Conn, info *clientInfo) error {
+func readHello(conn *Conn, info *ClientInfo) error {
 	switch msg := conn.Read().(type) {
 	case *Hello:
 		// set snappy if version is at least 5
@@ -175,7 +175,7 @@ func getStatus(config *params.ChainConfig, version uint32, genesis common.Hash, 
 	return _status
 }
 
-func readStatus(conn *Conn, info *clientInfo) error {
+func readStatus(conn *Conn, info *ClientInfo) error {
 	switch msg := conn.Read().(type) {
 	case *Status:
 		info.ForkID = msg.ForkID
@@ -198,7 +198,7 @@ func readStatus(conn *Conn, info *clientInfo) error {
 	return nil
 }
 
-func readHeaderInfo(conn *Conn, info *clientInfo) error {
+func readHeaderInfo(conn *Conn, info *ClientInfo) error {
 	switch msg := conn.Read().(type) {
 	case *BlockHeaders:
 		header := (*msg)[len(*msg)-1] //get latest header
