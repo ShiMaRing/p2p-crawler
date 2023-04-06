@@ -22,6 +22,8 @@ type Counter struct {
 	dataSizeReceived int //data size received
 	Rwlock           sync.RWMutex
 	StartTime        time.Time //start time we send the first package
+	ClientInfoCount  int
+	EthNodesCount    int
 }
 
 // AddSendNum add send number
@@ -29,6 +31,20 @@ func (c *Counter) AddSendNum() {
 	c.Rwlock.Lock()
 	defer c.Rwlock.Unlock()
 	c.SendNum++
+}
+
+// AddEthNodesCount add eth nodes count
+func (c *Counter) AddEthNodesCount() {
+	c.Rwlock.Lock()
+	defer c.Rwlock.Unlock()
+	c.EthNodesCount++
+}
+
+// AddClientInfoCount add client info count
+func (c *Counter) AddClientInfoCount() {
+	c.Rwlock.Lock()
+	defer c.Rwlock.Unlock()
+	c.ClientInfoCount++
 }
 
 // AddRecvNum add recv number
@@ -94,7 +110,8 @@ func (c *Counter) ToString() string {
 	defer c.Rwlock.RUnlock()
 	return "sendNum:" + strconv.Itoa(c.SendNum) + "  recvNum:" + strconv.Itoa(c.RecvNum) + "  nodesNum:" + strconv.Itoa(c.NodesNum) +
 		"  connectable:" + strconv.Itoa(c.ConnectAbleNodes) + "  dataSizeSended:" + dataSize2String(c.dataSizeSended) +
-		"  dataSizeReceived:" + dataSize2String(c.dataSizeReceived)
+		"  dataSizeReceived:" + dataSize2String(c.dataSizeReceived) + "  ClientInfoCount:" + strconv.Itoa(c.ClientInfoCount) +
+		"  EthNodesCount:" + strconv.Itoa(c.EthNodesCount)
 
 }
 

@@ -22,11 +22,11 @@ import (
 )
 
 const (
-	RoundInterval     = 30 * time.Second //crawl interval for each node
-	DefaultTimeout    = 1 * time.Hour    //check interval for all nodes
+	RoundInterval     = 12 * time.Second //crawl interval for each node
+	DefaultTimeout    = 30 * time.Minute //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
-	DefaultChanelSize = 2048
-	seedCount         = 30
+	DefaultChanelSize = 512
+	seedCount         = 32
 	seedMaxAge        = 5 * 24 * time.Hour
 	MaxDHTSize        = 17 * 16
 	Threshold         = 1
@@ -213,13 +213,9 @@ func (c *Crawler) daemon() {
 	go func() {
 		for {
 			select {
-			case <-c.ctx.Done():
-				ticker.Stop()
-				return
 			case <-ticker.C:
-				c.mu.Lock()
 				fmt.Println(c.counter.ToString()) //print the counter
-				c.mu.Unlock()
+				fmt.Println("worker num:", len(c.tokens), "  req num:", len(c.ReqCh), "  output num:", len(c.OutputCh), "  DHT num:", len(c.DHTCh))
 			}
 		}
 	}()
@@ -301,10 +297,13 @@ func (c *Crawler) Crawl() {
 			myNode.ConnectAble = true
 			c.counter.AddConnectAbleNodes() //add the connectable nodes
 			info, err := getClientInfo(makeGenesis(), 1, myNode.n)
-			if err != nil {
-				c.logger.Error("get client info failed", zap.Error(err))
+			if err == nil && info != nil {
+				myNode.clientInfo = info
+				c.counter.AddClientInfoCount() //add the client info count
+				if info.NetworkID == 1 {
+					c.counter.AddEthNodesCount() //add the eth nodes count
+				}
 			}
-			myNode.clientInfo = info
 		} else {
 			myNode.ConnectAble = false
 		}
@@ -332,13 +331,16 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 	c.mu.Unlock()
 	conn := listen(ld, "") //bind the local node to the port
 	nodesChan := make(chan nodes, 32)
-	enrChan := make(chan *enode.Node, 1)
+	enrChan := make(chan *enode.Node, 32)
+	wg := &sync.WaitGroup{}
+
 	defer func() {
+		c.tokens <- struct{}{} //send token back for next worker
+		wg.Wait()
 		conn.Close()
 		cancel()
 		time.Sleep(500 * time.Millisecond)
 		close(enrChan)
-		c.tokens <- struct{}{} //send token back for next worker
 	}()
 	go func() {
 		c.loop(conn, ctx, ld, prk, nodesChan, enrChan)
@@ -353,23 +355,33 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 		c.logger.Error("get enr failed", zap.Error(err))
 		return nil, err
 	}
-	newRecord := <-enrChan //get new node info from the enrChan
-	if newRecord == nil {
-		c.logger.Error("get enr failed", zap.String("node", node.String()))
-		return nil, fmt.Errorf("get enr failed: %s", node.String())
-	}
-	//check the record is correct
-	if newRecord.ID() != node.ID() {
-		return nil, fmt.Errorf("invalid ID in response record")
-	}
+	wg.Add(1)
 
-	//whether we need to update the node info
-	if newRecord.Seq() > node.Seq() {
-		//update node
-		if err := netutil.CheckRelayIP(node.IP(), newRecord.IP()); err == nil {
-			*node = *newRecord
+	go func() {
+		defer wg.Done()
+		var newRecord *enode.Node
+		select {
+		case <-ctx.Done():
+			return
+		case newRecord = <-enrChan: //get new node info from the enrChan
+			if newRecord == nil {
+				return
+			}
 		}
-	}
+		//check the record is correct
+		if newRecord.ID() != node.ID() {
+			return
+		}
+		//whether we need to update the node info
+		if newRecord.Seq() > node.Seq() {
+			//update node
+			if err := netutil.CheckRelayIP(node.IP(), newRecord.IP()); err == nil {
+				c.mu.Lock()
+				*node = *newRecord
+				c.mu.Unlock()
+			}
+		}
+	}()
 
 	//we try to crawl the DHT table
 	for {

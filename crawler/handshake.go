@@ -1,7 +1,6 @@
 package crawler
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
@@ -12,8 +11,6 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/rlpx"
@@ -33,12 +30,12 @@ type clientInfo struct {
 	Capabilities    []p2p.Cap
 	NetworkID       uint64
 	ForkID          forkid.ID
-	Blockheight     string
+	LastSeenTime    time.Time
 	TotalDifficulty *big.Int
 	HeadHash        common.Hash
 }
 
-func getClientInfo(genesis *core.Genesis, networkID uint64, nodeURL string, n *enode.Node) (*clientInfo, error) {
+func getClientInfo(genesis *core.Genesis, networkID uint64, n *enode.Node) (*clientInfo, error) {
 	var info clientInfo
 
 	conn, sk, err := dial(n)
@@ -67,16 +64,22 @@ func getClientInfo(genesis *core.Genesis, networkID uint64, nodeURL string, n *e
 		return nil, errors.Wrap(err, "cannot set conn deadline")
 	}
 
+	s := getStatus(genesis.Config, uint32(conn.negotiatedProtoVersion), genesis.ToBlock().Hash(), networkID)
+	if err = conn.Write(s); err != nil {
+		return nil, err
+	}
+
 	// Regardless of whether we wrote a status message or not, the remote side
 	// might still send us one.
+	time.Sleep(respTimeout) // wait for response
 
 	if err = readStatus(conn, &info); err != nil {
 		return nil, err
 	}
 
+	//we also need more info from the node
 	// Disconnect from client
 	_ = conn.Write(Disconnect{Reason: p2p.DiscQuitting})
-
 	return &info, nil
 }
 
@@ -89,16 +92,21 @@ func dial(n *enode.Node) (*Conn, *ecdsa.PrivateKey, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+
 	conn.Conn = rlpx.NewConn(fd, n.Pubkey())
-	if err = conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+
+	if err = conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return nil, nil, errors.Wrap(err, "cannot set conn deadline")
 	}
+
 	// do encHandshake
 	ourKey, _ := crypto.GenerateKey()
+
 	_, err = conn.Handshake(ourKey)
 	if err != nil {
 		return nil, nil, err
 	}
+
 	return &conn, ourKey, nil
 }
 
@@ -113,10 +121,13 @@ func writeHello(conn *Conn, priv *ecdsa.PrivateKey) error {
 			{Name: "eth", Version: 65},
 			{Name: "eth", Version: 66},
 			{Name: "eth", Version: 67},
+			{Name: "eth", Version: 68},
 			{Name: "les", Version: 2},
 			{Name: "les", Version: 3},
 			{Name: "les", Version: 4},
+			{Name: "les", Version: 5},
 			{Name: "snap", Version: 1},
+			{Name: "opera", Version: 62},
 		},
 		ID: pub0,
 	}
@@ -136,6 +147,7 @@ func readHello(conn *Conn, info *clientInfo) error {
 		info.Capabilities = msg.Caps
 		info.SoftwareVersion = msg.Version
 		info.ClientType = msg.Name
+		info.LastSeenTime = time.Now()
 	case *Disconnect:
 		return fmt.Errorf("bad hello handshake-1: %v", msg.Reason.Error())
 	case *Error:
@@ -149,7 +161,7 @@ func readHello(conn *Conn, info *clientInfo) error {
 	return nil
 }
 
-func getStatus(config *params.ChainConfig, version uint32, genesis common.Hash, network uint64, nodeURL string) *Status {
+func getStatus(config *params.ChainConfig, version uint32, genesis common.Hash, network uint64) *Status {
 	if _status == nil {
 		_status = &Status{
 			ProtocolVersion: version,
@@ -160,24 +172,6 @@ func getStatus(config *params.ChainConfig, version uint32, genesis common.Hash, 
 			ForkID:          forkid.NewID(config, genesis, 0),
 		}
 	}
-
-	if nodeURL != "" && time.Since(lastStatusUpdate) > 15*time.Second {
-		cl, err := ethclient.Dial(nodeURL)
-		if err != nil {
-			log.Error("ethclient.Dial", "err", err)
-			return _status
-		}
-
-		header, err := cl.HeaderByNumber(context.Background(), nil)
-		if err != nil {
-			log.Error("cannot get header by number", "err", err)
-			return _status
-		}
-
-		_status.Head = header.Hash()
-		_status.ForkID = forkid.NewID(config, genesis, header.Number.Uint64())
-	}
-
 	return _status
 }
 
@@ -189,16 +183,32 @@ func readStatus(conn *Conn, info *clientInfo) error {
 		info.NetworkID = msg.NetworkID
 		// m.ProtocolVersion
 		info.TotalDifficulty = msg.TD
+
 		// Set correct TD if received TD is higher
 		if msg.TD.Cmp(_status.TD) > 0 {
 			_status.TD = msg.TD
 		}
 	case *Disconnect:
-		return fmt.Errorf("bad status handshake: %v", msg.Reason.Error())
+		return fmt.Errorf("bad status handshake-1: %v", msg.Reason.Error())
 	case *Error:
-		return fmt.Errorf("bad status handshake: %v", msg.Error())
+		return fmt.Errorf("bad status handshake-2: %v", msg.Error())
 	default:
-		return fmt.Errorf("bad status handshake: %v", msg.Code())
+		return fmt.Errorf("bad status handshake-3: %v", msg.Code())
+	}
+	return nil
+}
+
+func readHeaderInfo(conn *Conn, info *clientInfo) error {
+	switch msg := conn.Read().(type) {
+	case *BlockHeaders:
+		header := (*msg)[len(*msg)-1] //get latest header
+		info.HeadHash = header.Hash()
+	case *Disconnect:
+		return fmt.Errorf("bad header info-1: %v", msg.Reason.Error())
+	case *Error:
+		return fmt.Errorf("bad header info-2: %v", msg.Error())
+	default:
+		return fmt.Errorf("bad header info-3: %v", msg.Code())
 	}
 	return nil
 }
