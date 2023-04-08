@@ -29,7 +29,7 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	MaxDHTSize        = 17 * 16
 	Threshold         = 5
-	StartRound        = 10
+	StartRound        = 2
 )
 
 type Crawler struct {
@@ -189,6 +189,7 @@ func (c *Crawler) Boot() error {
 		c.Cache[c.BootNodes[i].ID()] = struct{}{}
 	}
 	//create the disc service
+	c.RunDiscService()
 
 	defer func() {
 		c.cancel()

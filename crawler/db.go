@@ -68,9 +68,11 @@ func parse(info *ClientInfo, record *NodeRecord) {
 	record.NetworkID = int(info.NetworkID)
 	record.TotalDifficulty = info.TotalDifficulty.Text(10)
 	record.HeadHash = info.HeadHash.String()
-	record.Clients = parsed.Name
-	record.Os = parsed.Os.Os
-	record.ClientsRuntime = parsed.Language.Name
+	if parsed != nil {
+		record.Clients = parsed.Name
+		record.Os = parsed.Os.Os
+		record.ClientsRuntime = parsed.Language.Name
+	}
 }
 
 func (db *DB) Run() error {
@@ -97,7 +99,7 @@ func (db *DB) Run() error {
 			record.Clients,
 			record.Os,
 			record.ClientsRuntime,
-			record.NetworkID,
+			strconv.Itoa(record.NetworkID),
 			record.TotalDifficulty,
 			record.HeadHash,
 		)
