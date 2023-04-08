@@ -116,7 +116,7 @@ func (dv *DiscService) Run() {
 
 func (c *Crawler) RunDiscService() {
 	go func() {
-		service, err := c.runDiscService(Discv4)
+		service, err := c.runDiscService(Discv4, 8084)
 		if err != nil {
 			panic(err)
 			return
@@ -124,7 +124,7 @@ func (c *Crawler) RunDiscService() {
 		service.Run()
 	}()
 	go func() {
-		service, err := c.runDiscService(Discv5)
+		service, err := c.runDiscService(Discv5, 8085)
 		if err != nil {
 			panic(err)
 			return
@@ -133,7 +133,7 @@ func (c *Crawler) RunDiscService() {
 	}()
 }
 
-func (c *Crawler) runDiscService(version ProtocolVersion) (Disc, error) {
+func (c *Crawler) runDiscService(version ProtocolVersion, port int) (Disc, error) {
 	//create two discovery services, one for v4 and one for v5
 	db, err := enode.OpenDB("")
 	if err != nil {
@@ -141,7 +141,7 @@ func (c *Crawler) runDiscService(version ProtocolVersion) (Disc, error) {
 	}
 	key4v4, _ := crypto.GenerateKey()
 	node4v4 := enode.NewLocalNode(db, key4v4)
-	return NewDiscService(c.ctx, 8084, key4v4, node4v4, c.BootNodes, func(node *enode.Node) {
+	return NewDiscService(c.ctx, port, key4v4, node4v4, c.BootNodes, func(node *enode.Node) {
 		c.DHTCh <- node
 	}, version)
 }

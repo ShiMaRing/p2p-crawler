@@ -207,7 +207,7 @@ func (c *Crawler) Boot() error {
 		case <-c.ctx.Done(): //time out ,break it
 			return nil
 		case <-c.tokens: //wait for token
-			fmt.Println("get token, and left:", len(c.tokens))
+			//fmt.Println("get token, and left:", len(c.tokens))
 			go c.Crawl()
 		}
 	}

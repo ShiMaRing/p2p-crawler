@@ -3,6 +3,7 @@ package crawler
 import (
 	"database/sql"
 	_ "github.com/go-sql-driver/mysql"
+	"strconv"
 	"time"
 )
 
@@ -86,7 +87,9 @@ func (db *DB) Run() error {
 		record := node2Record(node)
 		//exec statement
 		_, err = statement.Exec(
-			record.ID, record.AccessTime, record.Address,
+			record.ID,
+			strconv.Itoa(int(record.Seq)),
+			record.AccessTime, record.Address,
 			record.ConnectAble,
 			record.NeighborCount,
 			record.Country,
