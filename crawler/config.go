@@ -4,12 +4,7 @@ import (
 	"time"
 )
 
-type Version int
-
 const (
-	Discv4 Version = iota
-	Discv5
-
 	DefaultWorkers = 512
 )
 
@@ -36,6 +31,9 @@ func DefaultConfig() Config {
 		RoundTimeout: RoundInterval,
 		Workers:      DefaultWorkers,
 		IsPersistent: false,
-		IsSql:        false,
+
+		IsSql:       true,
+		DatabaseUrl: "root:xgs1150840779@tcp(localhost:3306)/ethernodes?charset=utf8",
+		TableName:   "nodes",
 	}
 }

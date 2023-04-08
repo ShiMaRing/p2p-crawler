@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/ecdsa"
-	"database/sql"
 	"fmt"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -17,6 +16,7 @@ import (
 	"github.com/oschwald/geoip2-golang"
 	"go.uber.org/zap"
 	"os"
+	"p2p-crawler/db"
 	"sync"
 	"time"
 )
@@ -38,12 +38,13 @@ type Crawler struct {
 	Cache     map[enode.ID]struct{} // Cache is the set of nodes that the crawler is currently crawling,as a cache
 	tokens    chan struct{}         //tokens store token
 
-	ReqCh    chan *enode.Node // ReqCh is the channel that the crawler uses to send requests to the workers.
-	OutputCh chan *Node       // OutputCh is the channel that the crawler uses to send requests to the filter.
-	DHTCh    chan *enode.Node // DHTCh is the channel that the crawler uses to send requests to the DHT.
+	ReqCh      chan *enode.Node // ReqCh is the channel that the crawler uses to send requests to the workers.
+	OutputCh   chan *Node       // OutputCh is the channel that the crawler uses to send requests to the filter.
+	DHTCh      chan *enode.Node // DHTCh is the channel that the crawler uses to send requests to the DHT.
+	databaseCh chan *Node       //databaseCh is the channel that the crawler uses to send requests to the database.
 
 	leveldb   *enode.DB          // leveldb is the database that the crawler uses to store the nodes.
-	db        *sql.DB            // db is the database that the crawler uses to store the nodes.
+	db        *db.DB             // db is the database that the crawler uses to store the nodes.
 	tableName string             // tableName is the name of the table that the crawler will use to store the nodes.
 	mu        sync.Mutex         // mu is the mutex that protects the crawler.
 	ctx       context.Context    // ctx is the context that the crawler uses to cancel all crawl.
@@ -128,10 +129,11 @@ func NewCrawler(config Config) (*Crawler, error) {
 	reqCh := make(chan *enode.Node, DefaultChanelSize)
 	dhtCh := make(chan *enode.Node, DefaultChanelSize)
 	outputCh := make(chan *Node, DefaultChanelSize)
+	databaseCh := make(chan *Node, DefaultChanelSize)
 
-	var db *sql.DB
+	var base *db.DB
 	if config.IsSql == true { //we need to store the nodes to the database
-		db, err = sql.Open("mysql", config.DatabaseUrl)
+		base, err = db.NewDB(config.DatabaseUrl, config.TableName, databaseCh)
 		if err != nil {
 			return nil, err
 		}
@@ -143,21 +145,22 @@ func NewCrawler(config Config) (*Crawler, error) {
 	geoipDB, err := geoip2.Open("db/GeoLite2-City.mmdb")
 
 	crawler := &Crawler{
-		BootNodes: nodes,
-		Cache:     make(map[enode.ID]struct{}),
-		ReqCh:     reqCh,
-		tokens:    make(chan struct{}, config.Workers),
-		OutputCh:  outputCh,
-		DHTCh:     dhtCh,
-		leveldb:   ldb,
-		db:        db,
-		ctx:       ctx,
-		logger:    logger,
-		tableName: config.TableName,
-		cancel:    cancel,
-		Config:    config,
-		geoipDB:   geoipDB,
-		genesis:   makeGenesis(),
+		BootNodes:  nodes,
+		Cache:      make(map[enode.ID]struct{}),
+		ReqCh:      reqCh,
+		tokens:     make(chan struct{}, config.Workers),
+		OutputCh:   outputCh,
+		databaseCh: databaseCh,
+		DHTCh:      dhtCh,
+		leveldb:    ldb,
+		db:         base,
+		ctx:        ctx,
+		logger:     logger,
+		tableName:  config.TableName,
+		cancel:     cancel,
+		Config:     config,
+		geoipDB:    geoipDB,
+		genesis:    makeGenesis(),
 	}
 
 	if err != nil {
@@ -215,16 +218,16 @@ func (c *Crawler) Boot() error {
 func (c *Crawler) daemon() {
 	//save the nodes to the database
 	//create a file ,if exists, truncate it
-	buffer := make([]*Node, 0, DefaultChanelSize)
-	var err error
-	var statement *sql.Stmt
-	if c.IsSql { //we need to store the nodes to the sql database
-		statement, err = c.db.Prepare(`insert into nodes (id,seq,access_time,address) values (?,?,?,?,?)`)
-		if err != nil {
-			c.logger.Fatal("prepare sql statement failed", zap.Error(err))
+
+	go func() {
+		if c.db != nil {
+			if err := c.db.Run(); err != nil {
+				panic(err)
+			}
 		}
-		defer statement.Close()
-	}
+	}()
+
+	var err error
 	ticker := time.NewTicker(2 * time.Second) //every 2 seconds, we output the nodes to the file
 	go func() {
 		for {
@@ -239,14 +242,12 @@ func (c *Crawler) daemon() {
 		select {
 		case <-c.ctx.Done():
 			//save the nodes in outputCh to the database
+			time.Sleep(RoundInterval)
+			c.Close()
 			for n := range c.OutputCh {
 				c.leveldb.UpdateNode(n.n)
-				buffer = append(buffer, n)
-			}
-			if c.IsSql {
-				err := c.saveNodes(buffer, statement)
-				if err != nil {
-					c.logger.Error("save nodes to sql db failed", zap.Error(err))
+				if c.IsSql {
+					c.databaseCh <- n
 				}
 			}
 			return
@@ -258,14 +259,7 @@ func (c *Crawler) daemon() {
 			if !c.IsSql {
 				continue
 			}
-			buffer = append(buffer, node)
-			if len(buffer) == DefaultChanelSize {
-				err := c.saveNodes(buffer, statement)
-				if err != nil {
-					c.logger.Error("save nodes to sql db failed", zap.Error(err))
-				}
-				buffer = buffer[:0]
-			}
+			c.databaseCh <- node //send the node to the database chan
 		case node := <-c.DHTCh: //add the node to the reqch back
 			c.mu.Lock()
 			err = c.leveldb.UpdateNode(node)
@@ -506,18 +500,8 @@ func (c *Crawler) generateRandomNode() []*enode.Node {
 
 // saveNodes saves the nodes to the database.
 
-func (c *Crawler) saveNodes(buffer []*Node, statement *sql.Stmt) error {
-	//batch insert
-	if c.db == nil {
-		return fmt.Errorf("invalid database")
-	}
-	var err error
-	for i := range buffer {
-		node := buffer[i]
-		_, err = statement.Exec(node.n.ID().String(), node.n.Seq(), node.AccessTime, node.n.IP().String())
-		if err != nil {
-			return fmt.Errorf("exec sql statement failed: %v", err)
-		}
-	}
-	return nil
+func (c *Crawler) Close() {
+	close(c.DHTCh)
+	close(c.OutputCh)
+	close(c.ReqCh)
 }
