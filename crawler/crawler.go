@@ -16,7 +16,6 @@ import (
 	"github.com/oschwald/geoip2-golang"
 	"go.uber.org/zap"
 	"os"
-	"p2p-crawler/db"
 	"sync"
 	"time"
 )
@@ -44,7 +43,7 @@ type Crawler struct {
 	databaseCh chan *Node       //databaseCh is the channel that the crawler uses to send requests to the database.
 
 	leveldb   *enode.DB          // leveldb is the database that the crawler uses to store the nodes.
-	db        *db.DB             // db is the database that the crawler uses to store the nodes.
+	db        *DB                // db is the database that the crawler uses to store the nodes.
 	tableName string             // tableName is the name of the table that the crawler will use to store the nodes.
 	mu        sync.Mutex         // mu is the mutex that protects the crawler.
 	ctx       context.Context    // ctx is the context that the crawler uses to cancel all crawl.
@@ -131,9 +130,9 @@ func NewCrawler(config Config) (*Crawler, error) {
 	outputCh := make(chan *Node, DefaultChanelSize)
 	databaseCh := make(chan *Node, DefaultChanelSize)
 
-	var base *db.DB
+	var base *DB
 	if config.IsSql == true { //we need to store the nodes to the database
-		base, err = db.NewDB(config.DatabaseUrl, config.TableName, databaseCh)
+		base, err = NewDB(config.DatabaseUrl, config.TableName, databaseCh)
 		if err != nil {
 			return nil, err
 		}
@@ -189,6 +188,7 @@ func (c *Crawler) Boot() error {
 		//add the node to the cache
 		c.Cache[c.BootNodes[i].ID()] = struct{}{}
 	}
+	//create the disc service
 
 	defer func() {
 		c.cancel()

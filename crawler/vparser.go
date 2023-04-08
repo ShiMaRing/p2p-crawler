@@ -1,4 +1,4 @@
-package db
+package crawler
 
 import (
 	"fmt"
@@ -125,12 +125,12 @@ func parseVersion(input string) Version {
 		vers.Tag = split[1]
 		fallthrough
 	case 1:
-		// Version
+		// ProtocolVersion
 		vers.Major, vers.Minor, vers.Patch = parseVersionNumber(split[0])
 	}
 
 	if vers.Major == 0 && vers.Minor == 0 && vers.Patch == 0 {
-		fmt.Println("Version string is invalid:", input)
+		fmt.Println("ProtocolVersion string is invalid:", input)
 		vers.Error = true
 	}
 
@@ -138,7 +138,7 @@ func parseVersion(input string) Version {
 }
 
 func parseVersionNumber(input string) (int, int, int) {
-	// Version
+	// ProtocolVersion
 	trimmed := strings.TrimLeft(input, "v")
 	vSplit := strings.Split(trimmed, ".")
 	var major, minor, patch int

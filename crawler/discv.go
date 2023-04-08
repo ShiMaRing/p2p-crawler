@@ -4,25 +4,31 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"errors"
+	"github.com/ethereum/go-ethereum/crypto"
 	gethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"net"
 )
 
-type Version int
+type ProtocolVersion int
 
 const (
-	Discv4 Version = iota
+	Discv4 ProtocolVersion = iota
 	Discv5
 )
+
+type Disc interface {
+	Resolver
+	Run()
+}
 
 type Resolver interface {
 	RequestENR(*enode.Node) (*enode.Node, error)
 	RandomNodes() enode.Iterator
 }
 
-type DiscvService struct {
+type DiscService struct {
 	Resolver
 	ctx        context.Context
 	ethNode    *enode.LocalNode
@@ -30,13 +36,13 @@ type DiscvService struct {
 	enrHandler func(*enode.Node)
 }
 
-func NewvDiscService(
+func NewDiscService(
 	ctx context.Context,
 	port int,
 	privkey *ecdsa.PrivateKey,
 	ethNode *enode.LocalNode,
 	bootnodes []*enode.Node,
-	enrHandler func(*enode.Node), version Version) (Resolver, error) {
+	enrHandler func(*enode.Node), version ProtocolVersion) (Disc, error) {
 	if len(bootnodes) == 0 {
 		return nil, errors.New("unable to start peer discovery, no bootnodes provided")
 	}
@@ -82,7 +88,7 @@ func NewvDiscService(
 
 	iterator := resolver.RandomNodes()
 
-	return &DiscvService{
+	return &DiscService{
 		Resolver:   resolver,
 		ctx:        ctx,
 		ethNode:    ethNode,
@@ -91,7 +97,7 @@ func NewvDiscService(
 	}, nil
 }
 
-func (dv *DiscvService) Run() {
+func (dv *DiscService) Run() {
 	for {
 		// check if the context is still up
 		if err := dv.ctx.Err(); err != nil {
@@ -99,8 +105,43 @@ func (dv *DiscvService) Run() {
 		}
 		if dv.iterator.Next() {
 			newNode := dv.iterator.Node()
-			dv.enrHandler(newNode)
+			enr, err := dv.RequestENR(newNode)
+			if err != nil {
+				continue
+			}
+			dv.enrHandler(enr)
 		}
-
 	}
+}
+
+func (c *Crawler) RunDiscService() {
+	go func() {
+		service, err := c.runDiscService(Discv4)
+		if err != nil {
+			panic(err)
+			return
+		}
+		service.Run()
+	}()
+	go func() {
+		service, err := c.runDiscService(Discv5)
+		if err != nil {
+			panic(err)
+			return
+		}
+		service.Run()
+	}()
+}
+
+func (c *Crawler) runDiscService(version ProtocolVersion) (Disc, error) {
+	//create two discovery services, one for v4 and one for v5
+	db, err := enode.OpenDB("")
+	if err != nil {
+		return nil, err
+	}
+	key4v4, _ := crypto.GenerateKey()
+	node4v4 := enode.NewLocalNode(db, key4v4)
+	return NewDiscService(c.ctx, 8084, key4v4, node4v4, c.BootNodes, func(node *enode.Node) {
+		c.DHTCh <- node
+	}, version)
 }

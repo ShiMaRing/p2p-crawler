@@ -1,9 +1,8 @@
-package db
+package crawler
 
 import (
 	"database/sql"
 	_ "github.com/go-sql-driver/mysql"
-	"p2p-crawler/crawler"
 	"time"
 )
 
@@ -12,7 +11,7 @@ type DB struct {
 	url     string //url: the mysql url
 	table   string //table: the table name
 	base    *sql.DB
-	nodesCh chan *crawler.Node //receive node from crawler,and write to db
+	nodesCh chan *Node //receive node from crawler,and write to db
 }
 
 type NodeRecord struct {
@@ -32,7 +31,7 @@ type NodeRecord struct {
 	HeadHash        string
 }
 
-func NewDB(url string, table string, nodesCh chan *crawler.Node) (*DB, error) {
+func NewDB(url string, table string, nodesCh chan *Node) (*DB, error) {
 	db, err := sql.Open("mysql", url)
 	if err != nil {
 		return nil, err
@@ -46,7 +45,7 @@ func NewDB(url string, table string, nodesCh chan *crawler.Node) (*DB, error) {
 }
 
 //node2Record: change our node  to record type for insert and select
-func node2Record(node *crawler.Node) *NodeRecord {
+func node2Record(node *Node) *NodeRecord {
 	record := &NodeRecord{
 		ID:            node.ID.String(),
 		Seq:           node.Seq,
@@ -63,7 +62,7 @@ func node2Record(node *crawler.Node) *NodeRecord {
 	return record
 }
 
-func parse(info *crawler.ClientInfo, record *NodeRecord) {
+func parse(info *ClientInfo, record *NodeRecord) {
 	parsed := ParseVersionString(info.ClientType)
 	record.NetworkID = int(info.NetworkID)
 	record.TotalDifficulty = info.TotalDifficulty.Text(10)
