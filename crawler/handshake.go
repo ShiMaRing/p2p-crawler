@@ -35,10 +35,10 @@ type ClientInfo struct {
 	HeadHash        common.Hash
 }
 
-func getClientInfo(genesis *core.Genesis, networkID uint64, n *enode.Node) (*ClientInfo, error) {
+func getClientInfo(genesis *core.Genesis, networkID uint64, n *enode.Node, prk *ecdsa.PrivateKey) (*ClientInfo, error) {
 	var info ClientInfo
 
-	conn, sk, err := dial(n)
+	conn, sk, err := dial(n, prk)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func getClientInfo(genesis *core.Genesis, networkID uint64, n *enode.Node) (*Cli
 }
 
 // dial attempts to dial the given node and perform a handshake,
-func dial(n *enode.Node) (*Conn, *ecdsa.PrivateKey, error) {
+func dial(n *enode.Node, ourKey *ecdsa.PrivateKey) (*Conn, *ecdsa.PrivateKey, error) {
 	var conn Conn
 
 	// dial
@@ -98,9 +98,6 @@ func dial(n *enode.Node) (*Conn, *ecdsa.PrivateKey, error) {
 	if err = conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return nil, nil, errors.Wrap(err, "cannot set conn deadline")
 	}
-
-	// do encHandshake
-	ourKey, _ := crypto.GenerateKey()
 
 	_, err = conn.Handshake(ourKey)
 	if err != nil {

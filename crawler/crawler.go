@@ -277,6 +277,7 @@ func (c *Crawler) daemon() {
 	}
 }
 
+//Crawl bfs crawl method
 func (c *Crawler) Crawl() {
 	select {
 	case <-c.ctx.Done():
@@ -287,7 +288,8 @@ func (c *Crawler) Crawl() {
 		c.mu.Unlock()
 		//get node for crawl,the node never crawled
 
-		result, err := c.crawl(node) //we also updated the node info
+		//we can choose the crawl algorithm here
+		result, prk, err := c.crawl(node) //we also updated the node info
 
 		myNode := &Node{
 			n:          node,
@@ -306,7 +308,7 @@ func (c *Crawler) Crawl() {
 			myNode.NeighborsCount = len(result)
 			myNode.ConnectAble = true
 			c.counter.AddConnectAbleNodes() //add the connectable nodes
-			info, err := getClientInfo(makeGenesis(), 1, myNode.n)
+			info, err := getClientInfo(makeGenesis(), 1, myNode.n, prk)
 			if err == nil && info != nil {
 				myNode.ClientInfo = info
 				c.counter.AddClientInfoCount() //add the client info count
@@ -331,7 +333,7 @@ func (c *Crawler) Crawl() {
 type nodes []*enode.Node //we will get nodes arr from chan and deal with it
 
 //crawl the node
-func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
+func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, *ecdsa.PrivateKey, error) {
 	var ctx, cancel = context.WithTimeout(context.Background(), RoundInterval)
 	var cache = make(map[enode.ID]*enode.Node) //cache the nodes
 	var res []*enode.Node
@@ -357,12 +359,12 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 	err := c.Ping(conn, ld, node, prk)
 	if err != nil {
 		c.logger.Error("ping pong failed", zap.Error(err))
-		return nil, err
+		return nil, nil, err
 	}
 	err = c.getENR(conn, node, prk)
 	if err != nil {
 		c.logger.Error("get enr failed", zap.Error(err))
-		return nil, err
+		return nil, nil, err
 	}
 
 	go func() {
@@ -395,7 +397,7 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 		select {
 		case <-ctx.Done():
 			close(nodesChan)
-			return res, nil
+			return res, prk, nil
 		default:
 			//generate the random node
 			randomNodes := c.generateRandomNode()
@@ -412,7 +414,7 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 			var count = 0
 			select {
 			case <-ctx.Done():
-				return res, nil
+				return res, prk, nil
 			case findNodes = <-nodesChan:
 				if findNodes != nil {
 					//send to the output channel
@@ -429,7 +431,7 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, error) {
 						count++
 					}
 					if count >= Threshold || len(res) >= MaxDHTSize {
-						return res, nil
+						return res, prk, nil
 					}
 				}
 			}
