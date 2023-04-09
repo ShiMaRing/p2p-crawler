@@ -100,7 +100,7 @@ func NewCrawler(config Config) (*Crawler, error) {
 			return nil, err
 		}
 	}
-
+	counter := &Counter{}
 	ld, cfg = makeDiscoveryConfig(ldb, nodes)
 	prk = cfg.PrivateKey
 	conn := listen(ld, "")
@@ -130,6 +130,20 @@ func NewCrawler(config Config) (*Crawler, error) {
 		ldb.UpdateNode(nodes[i])
 	}
 
+	var discv5 *discover.UDPv5
+	if config.Zeus {
+		//we need support zeus algorithm
+		//create udpv5
+		innerConn := listen(ld, "")
+		counterUDP := &CounterUDP{
+			conn:    innerConn,
+			counter: counter,
+		}
+		discv5, err = discover.ListenV5(counterUDP, ld, cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
 	//create ctx
 	reqCh := make(chan *enode.Node, DefaultChanelSize)
 	dhtCh := make(chan *enode.Node, DefaultChanelSize)
@@ -165,10 +179,11 @@ func NewCrawler(config Config) (*Crawler, error) {
 		cancel:     cancel,
 		Config:     config,
 		geoipDB:    geoipDB,
-		counter:    &Counter{},
+		counter:    counter,
 		genesis:    makeGenesis(),
 		ld:         ld,
 		prk:        prk,
+		discv5:     discv5, //for zeus algorithm
 	}
 
 	if err != nil {
