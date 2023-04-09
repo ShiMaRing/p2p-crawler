@@ -5,7 +5,8 @@ import (
 )
 
 const (
-	DefaultWorkers = 512
+	DefaultWorkers = 32
+	MAX_WORKERS    = 64
 )
 
 // Config is the context that the crawler uses to store the state of the crawler

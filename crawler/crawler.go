@@ -52,7 +52,7 @@ type Crawler struct {
 	prk *ecdsa.PrivateKey // prk is the private key that the crawler uses to sign the requests.
 	ld  *enode.LocalNode  // ld is the local node that the crawler uses to sign the requests.
 
-	discv5 *discover.UDPv5 // discv5 for zeus algorithm ,discv4 not appropriate to apply zeus algorithm.
+	discv5Pool Pool // discv5 for zeus algorithm ,discv4 not appropriate to apply zeus algorithm.
 
 	genesis *core.Genesis // genesis is the genesis block that the crawler uses to verify the nodes.
 
@@ -130,20 +130,31 @@ func NewCrawler(config Config) (*Crawler, error) {
 		ldb.UpdateNode(nodes[i])
 	}
 
-	var discv5 *discover.UDPv5
+	var discv5pool Pool
 	if config.Zeus {
-		//we need support zeus algorithm
-		//create udpv5
-		innerConn := listen(ld, "")
-		counterUDP := &CounterUDP{
-			conn:    innerConn,
-			counter: counter,
-		}
-		discv5, err = discover.ListenV5(counterUDP, ld, cfg)
-		if err != nil {
-			return nil, err
-		}
+		var nodesTmps = make([]*enode.Node, len(nodes))
+		copy(nodesTmps, nodes)
+		discv5pool, _ = NewChannelPool(DefaultWorkers, MAX_WORKERS, func() (*discover.UDPv5, error) {
+			tmp, err := enode.OpenDB("")
+			if err != nil {
+				return nil, err
+			}
+			var tmps = make([]*enode.Node, len(nodesTmps)) //we need to copy the nodesTmps
+			copy(tmps, nodesTmps)
+			ld, cfg = makeDiscoveryConfig(tmp, tmps)
+			innerConn := listen(ld, "")
+			counterUDP := &CounterUDP{
+				conn:    innerConn,
+				counter: counter,
+			}
+			discv5, err := discover.ListenV5(counterUDP, ld, cfg)
+			if err != nil {
+				return nil, err
+			}
+			return discv5, nil
+		})
 	}
+
 	//create ctx
 	reqCh := make(chan *enode.Node, DefaultChanelSize)
 	dhtCh := make(chan *enode.Node, DefaultChanelSize)
@@ -183,7 +194,7 @@ func NewCrawler(config Config) (*Crawler, error) {
 		genesis:    makeGenesis(),
 		ld:         ld,
 		prk:        prk,
-		discv5:     discv5, //for zeus algorithm
+		discv5Pool: discv5pool, //for zeus algorithm
 	}
 
 	if err != nil {
