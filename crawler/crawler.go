@@ -230,6 +230,7 @@ func (c *Crawler) Boot() error {
 		c.cancel()
 		c.writer.Flush()
 		c.geoipDB.Close()
+		c.Close()
 		f.Close()
 	}()
 
@@ -323,8 +324,16 @@ func (c *Crawler) Crawl() {
 		c.mu.Unlock()
 		//get node for crawl_bfs,the node never crawled
 
+		// in this wat ,choose the crawl method
 		//we can choose the crawl_bfs algorithm here
-		result, err := c.crawlBFS(node) //we also updated the node info
+		var result []*enode.Node
+		var err error
+
+		if c.discv5Pool == nil {
+			result, err = c.crawlBFS(node) //we also updated the node info
+		} else {
+			result, err = c.crawlZeus(node) //we also updated the node info
+		}
 
 		myNode := &Node{
 			n:          node,
@@ -541,4 +550,5 @@ func (c *Crawler) Close() {
 	close(c.DHTCh)
 	close(c.OutputCh)
 	close(c.ReqCh)
+	c.discv5Pool.Close()
 }

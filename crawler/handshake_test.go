@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"os"
 	"testing"
@@ -22,7 +23,8 @@ func TestGetClientInfo(t *testing.T) {
 			panic(err2)
 		}
 		node := getNode(string(bytes))
-		info, err := getClientInfo(makeGenesis(), 1, node)
+		prk, _ := crypto.GenerateKey()
+		info, err := getClientInfo(makeGenesis(), 1, node, prk)
 		if err != nil {
 			t.Logf("err: %v", err)
 			continue
