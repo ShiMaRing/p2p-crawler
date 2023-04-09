@@ -3,15 +3,15 @@ package crawler
 import (
 	"errors"
 	"fmt"
-	"net"
+	"github.com/ethereum/go-ethereum/p2p/discover"
 	"sync"
 )
 
-// channelPool implements the Pool interface based on buffered channels.
-type channelPool struct {
+// Discv5Pool implements the Pool
+type Discv5Pool struct {
 	// storage for our net.Conn connections
 	mu    sync.RWMutex
-	conns chan net.Conn
+	conns chan *discover.UDPv5
 
 	// net.Conn generator
 	factory Factory
@@ -23,7 +23,7 @@ type Pool interface {
 	// Get returns a new connection from the pool. Closing the connections puts
 	// it back to the Pool. Closing it when the pool is destroyed or full will
 	// be counted as an error.
-	Get() (net.Conn, error)
+	Get() (*PoolConn, error)
 
 	// Close closes the pool and all its connections. After Close() the pool is
 	// no longer usable.
@@ -34,7 +34,7 @@ type Pool interface {
 }
 
 // Factory is a function to create new connections.
-type Factory func() (net.Conn, error)
+type Factory func() (*discover.UDPv5, error)
 
 var (
 	// ErrClosed is the error resulting if the pool is closed via pool.Close().
@@ -52,8 +52,8 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
 		return nil, errors.New("invalid capacity settings")
 	}
 
-	c := &channelPool{
-		conns:   make(chan net.Conn, maxCap),
+	c := &Discv5Pool{
+		conns:   make(chan *discover.UDPv5, maxCap),
 		factory: factory,
 	}
 
@@ -71,7 +71,7 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
 	return c, nil
 }
 
-func (c *channelPool) getConnsAndFactory() (chan net.Conn, Factory) {
+func (c *Discv5Pool) getConnsAndFactory() (chan *discover.UDPv5, Factory) {
 	c.mu.RLock()
 	conns := c.conns
 	factory := c.factory
@@ -82,7 +82,7 @@ func (c *channelPool) getConnsAndFactory() (chan net.Conn, Factory) {
 // Get implements the Pool interfaces Get() method. If there is no new
 // connection available in the pool, a new connection will be created via the
 // Factory() method.
-func (c *channelPool) Get() (net.Conn, error) {
+func (c *Discv5Pool) Get() (*PoolConn, error) {
 	conns, factory := c.getConnsAndFactory()
 	if conns == nil {
 		return nil, ErrClosed
@@ -109,7 +109,7 @@ func (c *channelPool) Get() (net.Conn, error) {
 
 // put puts the connection back to the pool. If the pool is full or closed,
 // conn is simply closed. A nil conn will be rejected.
-func (c *channelPool) put(conn net.Conn) error {
+func (c *Discv5Pool) put(conn *discover.UDPv5) error {
 	if conn == nil {
 		return errors.New("connection is nil. rejecting")
 	}
@@ -118,8 +118,9 @@ func (c *channelPool) put(conn net.Conn) error {
 	defer c.mu.RUnlock()
 
 	if c.conns == nil {
+		conn.Close()
 		// pool is closed, close passed connection
-		return conn.Close()
+		return nil
 	}
 
 	// put the resource back into the pool. If the pool is full, this will
@@ -129,11 +130,12 @@ func (c *channelPool) put(conn net.Conn) error {
 		return nil
 	default:
 		// pool is full, close passed connection
-		return conn.Close()
+		conn.Close()
+		return nil
 	}
 }
 
-func (c *channelPool) Close() {
+func (c *Discv5Pool) Close() {
 	c.mu.Lock()
 	conns := c.conns
 	c.conns = nil
@@ -150,17 +152,15 @@ func (c *channelPool) Close() {
 	}
 }
 
-func (c *channelPool) Len() int {
+func (c *Discv5Pool) Len() int {
 	conns, _ := c.getConnsAndFactory()
 	return len(conns)
 }
 
-// PoolConn is a wrapper around net.Conn to modify the the behavior of
-// net.Conn's Close() method.
 type PoolConn struct {
-	net.Conn
+	Conn     *discover.UDPv5
 	mu       sync.RWMutex
-	c        *channelPool
+	c        *Discv5Pool
 	unusable bool
 }
 
@@ -171,9 +171,9 @@ func (p *PoolConn) Close() error {
 
 	if p.unusable {
 		if p.Conn != nil {
-			return p.Conn.Close()
+			p.Conn.Close()
+			return nil
 		}
-		return nil
 	}
 	return p.c.put(p.Conn)
 }
@@ -186,7 +186,7 @@ func (p *PoolConn) MarkUnusable() {
 }
 
 // newConn wraps a standard net.Conn to a poolConn net.Conn.
-func (c *channelPool) wrapConn(conn net.Conn) net.Conn {
+func (c *Discv5Pool) wrapConn(conn *discover.UDPv5) *PoolConn {
 	p := &PoolConn{c: c}
 	p.Conn = conn
 	return p
