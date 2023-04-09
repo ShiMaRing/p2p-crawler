@@ -26,7 +26,7 @@ type Node struct {
 
 // GetEnodeV4 get all nodes from this node
 func (node *Node) GetEnodeV4(ch chan *Node, db *enode.DB, bootNodes []*enode.Node) []*Node {
-	//make a local node for crawl
+	//make a local node for crawl_bfs
 	//generate a local node
 	ln, cfg := makeDiscoveryConfig(db, bootNodes)
 	conn := listen(ln, "")
@@ -36,7 +36,7 @@ func (node *Node) GetEnodeV4(ch chan *Node, db *enode.DB, bootNodes []*enode.Nod
 		panic(err)
 	}
 	defer disc.Close()
-	//crawl the node ,send it to the channel and return result
+	//crawl_bfs the node ,send it to the channel and return result
 
 	//return the nodes
 	return nil

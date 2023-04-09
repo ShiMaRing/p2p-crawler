@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	RoundInterval     = 30 * time.Second //crawl interval for each node
+	RoundInterval     = 30 * time.Second //crawl_bfs interval for each node
 	DefaultTimeout    = 30 * time.Minute //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
 	DefaultChanelSize = 1024
@@ -46,12 +46,17 @@ type Crawler struct {
 	db        *DB                // db is the database that the crawler uses to store the nodes.
 	tableName string             // tableName is the name of the table that the crawler will use to store the nodes.
 	mu        sync.Mutex         // mu is the mutex that protects the crawler.
-	ctx       context.Context    // ctx is the context that the crawler uses to cancel all crawl.
-	cancel    context.CancelFunc // cancel is the function that the crawler uses to cancel all crawl.
+	ctx       context.Context    // ctx is the context that the crawler uses to cancel all crawlBFS.
+	cancel    context.CancelFunc // cancel is the function that the crawler uses to cancel all crawlBFS.
+
+	prk *ecdsa.PrivateKey // prk is the private key that the crawler uses to sign the requests.
+	ld  *enode.LocalNode  // ld is the local node that the crawler uses to sign the requests.
+
+	discv5 *discover.UDPv5 // discv5 for zeus algorithm ,discv4 not appropriate to apply zeus algorithm.
 
 	genesis *core.Genesis // genesis is the genesis block that the crawler uses to verify the nodes.
 
-	counter Counter //counter is the counter that the crawler uses to count the nodes.
+	counter *Counter //counter is the counter that the crawler uses to count the nodes.
 
 	logger *zap.Logger // logger is the logger that the crawler uses to log the information.
 	Config             // config is the config that the crawler uses to store the state of the crawler.
@@ -64,7 +69,6 @@ func NewCrawler(config Config) (*Crawler, error) {
 	var err error
 	nodes := make([]*enode.Node, 0)
 	//start from the boot nodes
-	var ldb *enode.DB
 
 	//start from the MainBootNodes
 	s := params.MainnetBootnodes
@@ -75,53 +79,55 @@ func NewCrawler(config Config) (*Crawler, error) {
 			return nil, fmt.Errorf("invalid bootstrap node: %v", err)
 		}
 	}
+	var ldb *enode.DB
+	var prk *ecdsa.PrivateKey
+	var ld *enode.LocalNode
+	var cfg discover.Config
+
 	if config.IsPersistent == false {
 		ldb, err = enode.OpenDB("")
 		if err != nil {
 			return nil, err
 		}
 		//add the nodes to the leveldb
-		ld, cfg := makeDiscoveryConfig(ldb, nodes)
-
-		conn := listen(ld, "")
-		defer func() {
-			conn.Close()
-		}()
-
-		v4, err := discover.ListenV4(conn, ld, cfg)
-		if err != nil {
-			return nil, err
-		}
-		group := &sync.WaitGroup{}
-		lock := sync.Mutex{}
-		nodes := make([]*enode.Node, 0)
-		for i := 0; i < StartRound; i++ {
-			group.Add(1)
-			go func() {
-				defer group.Done()
-				key, _ := crypto.GenerateKey()
-				pbkey := &key.PublicKey
-				lock.Lock()
-				nodes = append(nodes, v4.LookupPubkey(pbkey)...)
-				lock.Unlock()
-			}()
-		}
-		group.Wait()
-		for i := range nodes {
-			ldb.UpdateNode(nodes[i])
-		}
-
 	} else {
+		if config.DbName == "" {
+			return nil, fmt.Errorf("invalid database name")
+		}
 		//start from the database
 		ldb, err = enode.OpenDB(config.DbName)
 		if err != nil {
 			return nil, err
 		}
-		//load the nodes from the database
-		tmp := ldb.QuerySeeds(seedCount, seedMaxAge)
-		if len(tmp) != 0 {
-			nodes = tmp //change the start nodes  from the database
-		}
+	}
+
+	ld, cfg = makeDiscoveryConfig(ldb, nodes)
+	prk = cfg.PrivateKey
+	conn := listen(ld, "")
+	defer func() {
+		conn.Close()
+	}()
+	v4, err := discover.ListenV4(conn, ld, cfg)
+	if err != nil {
+		return nil, err
+	}
+	group := &sync.WaitGroup{}
+	lock := sync.Mutex{}
+	nodes = nodes[:0] //reset the nodes
+	for i := 0; i < StartRound; i++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			key, _ := crypto.GenerateKey()
+			pbkey := &key.PublicKey
+			lock.Lock()
+			nodes = append(nodes, v4.LookupPubkey(pbkey)...)
+			lock.Unlock()
+		}()
+	}
+	group.Wait()
+	for i := range nodes {
+		ldb.UpdateNode(nodes[i])
 	}
 
 	//create ctx
@@ -159,7 +165,10 @@ func NewCrawler(config Config) (*Crawler, error) {
 		cancel:     cancel,
 		Config:     config,
 		geoipDB:    geoipDB,
+		counter:    &Counter{},
 		genesis:    makeGenesis(),
+		ld:         ld,
+		prk:        prk,
 	}
 
 	if err != nil {
@@ -267,7 +276,7 @@ func (c *Crawler) daemon() {
 			if err != nil {
 				c.logger.Error("save nodes to leveldb failed", zap.Error(err))
 			}
-			//we did not crawl the node,so we should add it to the reqch
+			//we did not crawl_bfs the node,so we should add it to the reqch
 			if _, ok := c.Cache[node.ID()]; !ok {
 				c.Cache[node.ID()] = struct{}{} //add to the cache
 				c.ReqCh <- node                 //add to the reqch
@@ -277,7 +286,7 @@ func (c *Crawler) daemon() {
 	}
 }
 
-//Crawl bfs crawl method
+//Crawl bfs crawl_bfs method
 func (c *Crawler) Crawl() {
 	select {
 	case <-c.ctx.Done():
@@ -286,10 +295,10 @@ func (c *Crawler) Crawl() {
 		c.mu.Lock()
 		c.Cache[node.ID()] = struct{}{}
 		c.mu.Unlock()
-		//get node for crawl,the node never crawled
+		//get node for crawl_bfs,the node never crawled
 
-		//we can choose the crawl algorithm here
-		result, prk, err := c.crawl(node) //we also updated the node info
+		//we can choose the crawl_bfs algorithm here
+		result, err := c.crawlBFS(node) //we also updated the node info
 
 		myNode := &Node{
 			n:          node,
@@ -299,7 +308,7 @@ func (c *Crawler) Crawl() {
 			AccessTime: time.Now(),
 		}
 		if err != nil {
-			c.logger.Error("crawl node failed", zap.Error(err))
+			c.logger.Error("crawl_bfs node failed", zap.Error(err))
 		}
 		if result != nil {
 			for i := range result {
@@ -308,7 +317,7 @@ func (c *Crawler) Crawl() {
 			myNode.NeighborsCount = len(result)
 			myNode.ConnectAble = true
 			c.counter.AddConnectAbleNodes() //add the connectable nodes
-			info, err := getClientInfo(makeGenesis(), 1, myNode.n, prk)
+			info, err := getClientInfo(c.genesis, 1, myNode.n, c.prk)
 			if err == nil && info != nil {
 				myNode.ClientInfo = info
 				c.counter.AddClientInfoCount() //add the client info count
@@ -332,15 +341,14 @@ func (c *Crawler) Crawl() {
 
 type nodes []*enode.Node //we will get nodes arr from chan and deal with it
 
-//crawl the node
-func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, *ecdsa.PrivateKey, error) {
+//crawlBFS the node with bfs
+func (c *Crawler) crawlBFS(node *enode.Node) ([]*enode.Node, error) {
 	var ctx, cancel = context.WithTimeout(context.Background(), RoundInterval)
 	var cache = make(map[enode.ID]*enode.Node) //cache the nodes
 	var res []*enode.Node
-	prk, _ := crypto.GenerateKey()
-	c.mu.Lock()
-	ld := enode.NewLocalNode(c.leveldb, prk)
-	c.mu.Unlock()
+	var prk = c.prk
+	var ld = c.ld
+
 	conn := listen(ld, "") //bind the local node to the port
 	nodesChan := make(chan nodes, 32)
 	enrChan := make(chan *enode.Node, 32)
@@ -359,12 +367,12 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, *ecdsa.PrivateKey, err
 	err := c.Ping(conn, ld, node, prk)
 	if err != nil {
 		c.logger.Error("ping pong failed", zap.Error(err))
-		return nil, nil, err
+		return nil, err
 	}
 	err = c.getENR(conn, node, prk)
 	if err != nil {
 		c.logger.Error("get enr failed", zap.Error(err))
-		return nil, nil, err
+		return nil, err
 	}
 
 	go func() {
@@ -392,12 +400,12 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, *ecdsa.PrivateKey, err
 		}
 	}()
 
-	//we try to crawl the DHT table
+	//we try to crawl_bfs the DHT table
 	for {
 		select {
 		case <-ctx.Done():
 			close(nodesChan)
-			return res, prk, nil
+			return res, nil
 		default:
 			//generate the random node
 			randomNodes := c.generateRandomNode()
@@ -414,7 +422,7 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, *ecdsa.PrivateKey, err
 			var count = 0
 			select {
 			case <-ctx.Done():
-				return res, prk, nil
+				return res, nil
 			case findNodes = <-nodesChan:
 				if findNodes != nil {
 					//send to the output channel
@@ -431,7 +439,7 @@ func (c *Crawler) crawl(node *enode.Node) ([]*enode.Node, *ecdsa.PrivateKey, err
 						count++
 					}
 					if count >= Threshold || len(res) >= MaxDHTSize {
-						return res, prk, nil
+						return res, nil
 					}
 				}
 			}

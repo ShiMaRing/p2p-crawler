@@ -13,7 +13,7 @@ type Config struct {
 	TotalTimeout time.Duration //limit the time of the crawler life
 	RoundTimeout time.Duration //limit the time of each round
 
-	Workers int // Workers is the number of workers that the crawler will use to crawl the network.
+	Workers int // Workers is the number of workers that the crawler will use to crawl_bfs the network.
 
 	//config for level db
 	IsPersistent bool   // IsPersistent is the flag that the crawler uses to determine if it should store the nodes in the database.
@@ -23,6 +23,8 @@ type Config struct {
 	IsSql       bool   // IsSql is the flag that the crawler uses to determine if it should store the nodes in the outer database.
 	DatabaseUrl string // DatabaseUrl is the url of the database that the crawler will use to store the nodes.
 	TableName   string // TableName is the name of the table that the crawler will use to store the nodes.
+
+	Zeus bool // Zeus is the flag that the crawler uses to determine if it should store the nodes in the outer database.
 }
 
 func DefaultConfig() Config {
@@ -35,5 +37,6 @@ func DefaultConfig() Config {
 		IsSql:       true,
 		DatabaseUrl: "root:xgs1150840779@tcp(localhost:3306)/ethernodes?charset=utf8",
 		TableName:   "nodes",
+		Zeus:        false,
 	}
 }
