@@ -31,7 +31,7 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	MaxDHTSize        = 17 * 16
 	Threshold         = 5
-	StartRound        = 1
+	StartRound        = 3
 )
 
 type Crawler struct {
