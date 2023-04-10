@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 	"time"
@@ -14,20 +15,20 @@ const (
 )
 
 type NodeRecord struct {
-	ID              string
-	Seq             uint64
-	AccessTime      time.Time
-	Address         string
-	ConnectAble     bool
-	NeighborCount   int
-	Country         string
-	City            string
-	Clients         string
-	Os              string
-	ClientsRuntime  string
-	NetworkID       int
-	TotalDifficulty string
-	HeadHash        string
+	ID              string    `json:"id,omitempty"`
+	Seq             uint64    `json:"seq,omitempty"`
+	AccessTime      time.Time `json:"accessTime,omitempty"`
+	Address         string    `json:"address,omitempty"`
+	ConnectAble     bool      `json:"connectAble,omitempty"`
+	NeighborCount   int       `json:"neighborCount,omitempty"`
+	Country         string    `json:"country,omitempty"`
+	City            string    `json:"city,omitempty"`
+	Clients         string    `json:"clients,omitempty"`
+	Os              string    `json:"os,omitempty"`
+	ClientsRuntime  string    `json:"clientsRuntime,omitempty"`
+	NetworkID       int       `json:"networkId,omitempty"`
+	TotalDifficulty string    `json:"totalDifficulty,omitempty"`
+	HeadHash        string    `json:"headHash,omitempty"`
 }
 
 func main() {
@@ -41,6 +42,13 @@ func main() {
 
 	// Create a gin router with default middleware:
 	r := gin.Default()
+
+	// Enable CORS
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost", "http://127.0.0.1:5173"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowCredentials: true,
+	}))
 
 	// Get all NodeRecord objects
 	r.GET("/nodeRecords", func(c *gin.Context) {
