@@ -3,9 +3,9 @@ package crawler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"time"
 	_ "unsafe"
 )
 
@@ -176,28 +176,20 @@ func mergeWith10(a enode.ID, length int) enode.ID {
 
 func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), RoundInterval)
-
-	fmt.Println("crawlZeus start")
 	conn, err := c.discv5Pool.Get()
-	if err != nil {
-		return nil, err
-	}
 	defer func() {
-		fmt.Println("crawlZeus end")
+		//fmt.Println("crawlZeus end")
 		cancel()
 		conn.Close()
 		c.tokens <- struct{}{}
 	}()
 	//we will implement the zeus algorithm here
-	err = conn.Conn.Ping(node)
-	if err != nil {
-		return nil, err
-	}
+	conn.Conn.Ping(node)
+	time.Sleep(time.Second * 1)
 	enr, err := conn.Conn.RequestENR(node)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		*node = *enr
 	}
-	*node = *enr
 	q := newQueue()
 	l := set(make(map[enode.ID]*enode.Node))
 	m, err := requestL(conn.Conn, node, ALL_ZERO)

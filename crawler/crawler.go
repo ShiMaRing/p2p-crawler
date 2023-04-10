@@ -139,12 +139,12 @@ func NewCrawler(config Config) (*Crawler, error) {
 	gethLogger.SetHandler(gethlog.FuncHandler(func(r *gethlog.Record) error {
 		return nil
 	}))
+	tmp, err := enode.OpenDB("")
 
 	if config.Zeus {
 		var nodesTmps = make([]*enode.Node, len(nodes))
 		copy(nodesTmps, nodes)
 		discv5pool, _ = NewChannelPool(DefaultWorkers, MAX_WORKERS, func() (*discover.UDPv5, error) {
-			tmp, err := enode.OpenDB("")
 			if err != nil {
 				return nil, err
 			}
@@ -163,17 +163,19 @@ func NewCrawler(config Config) (*Crawler, error) {
 			}
 			// udp address to listen
 			udpAddr := &net.UDPAddr{
-				IP:   net.IPv4zero,
+				IP:   net.IPv4(0, 0, 0, 0),
 				Port: port,
 			}
 			conn, err := net.ListenUDP("udp", udpAddr)
+			if err != nil {
+				return nil, err
+			}
 			port++
 			counterUDP := &CounterUDP{
 				conn:    conn,
 				counter: counter,
 			}
 			discv5, err := discover.ListenV5(counterUDP, ld, cfg)
-
 			if err != nil {
 				return nil, err
 			}
@@ -250,7 +252,7 @@ func (c *Crawler) Boot() error {
 		c.Cache[c.BootNodes[i].ID()] = struct{}{}
 	}
 	//create the disc service
-	c.RunDiscService()
+	//c.RunDiscService()
 
 	defer func() {
 		c.cancel()
@@ -358,12 +360,12 @@ func (c *Crawler) Crawl() {
 		if c.discv5Pool == nil {
 			result, err = c.crawlBFS(node) //we also updated the node info
 			if err != nil {
-				c.logger.Error("crawlBFS node failed", zap.Error(err))
+				//c.logger.Error("crawlBFS node failed", zap.Error(err))
 			}
 		} else {
 			result, err = c.crawlZeus(node) //we also updated the node info
 			if err != nil {
-				c.logger.Error("crawlZeus node failed", zap.Error(err))
+				//c.logger.Error("crawlZeus node failed", zap.Error(err))
 			}
 		}
 
