@@ -249,7 +249,7 @@ func requestL(dis *discover.UDPv5, destNode *enode.Node, target enode.ID) ([]*en
 	return findnode(dis, destNode, dists)
 }
 
-//go:linkname findNode github.com/ethereum/go-ethereum/p2p/discover/t.(*UDPv5).findnode
+//go:linkname findNode github.com/ethereum/go-ethereum/p2p/discover.(*UDPv5).findnode
 func findnode(_ *discover.UDPv5, n *enode.Node, distances []uint) ([]*enode.Node, error)
 
 func lookupDistances(target, dest enode.ID) (dists []uint) {
