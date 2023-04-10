@@ -38,6 +38,6 @@ func DefaultConfig() Config {
 		IsSql:       true,
 		DatabaseUrl: "root:xgs1150840779@tcp(localhost:3306)/ethernodes?charset=utf8",
 		TableName:   "nodes",
-		Zeus:        false,
+		Zeus:        true,
 	}
 }

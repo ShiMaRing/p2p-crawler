@@ -1,6 +1,8 @@
 package crawler
 
 import (
+	"errors"
+	"fmt"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	_ "unsafe"
@@ -140,7 +142,7 @@ func mergeWith01(a enode.ID, length int) enode.ID {
 	//set the count
 	count = count & ^(1 << (7 - bitIndex))
 	//set the length+ 1 bit and other to 1
-	mask := (1 << (7 - bitIndex)) - 1
+	mask := (uint8(1) << (7 - bitIndex)) - uint8(1)
 	count = count | mask
 	for i := byteIndex + 1; i < len(a); i++ {
 		a[i] = 255
@@ -161,9 +163,9 @@ func mergeWith10(a enode.ID, length int) enode.ID {
 	var bitIndex = length % 8
 	var count = a[byteIndex]
 	//set the count
-	count = count | (1 << (7 - bitIndex))
+	count = count | (uint8(1) << (7 - bitIndex))
 	//set the length+ 1 bit and other to 1
-	mask := ^((1 << (7 - bitIndex)) - 1)
+	mask := ^((uint8(1) << (7 - bitIndex)) - uint8(1))
 	count = count & mask
 	for i := byteIndex + 1; i < len(a); i++ {
 		a[i] = 0
@@ -172,11 +174,13 @@ func mergeWith10(a enode.ID, length int) enode.ID {
 }
 
 func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
+	fmt.Println("crawlZeus start")
 	conn, err := c.discv5Pool.Get()
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
+		fmt.Println("crawlZeus end")
 		conn.Close()
 	}()
 	//we will implement the zeus algorithm here
@@ -184,12 +188,7 @@ func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	//get the new node record
-	*node = *conn.Conn.Resolve(node)
-	//256 bits
-
 	q := newQueue()
-
 	l := set(make(map[enode.ID]*enode.Node))
 	m, err := requestL(conn.Conn, node, ALL_ZERO)
 	if err != nil {
@@ -204,6 +203,10 @@ func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
 	}
 	l.merge(m)
 	k_last := getClosetKey(m, ALL_ONES)
+
+	if (k_first == nil) || (k_last == nil) {
+		return nil, errors.New("k_first or k_last is nil")
+	}
 	if compareId(k_first.ID(), k_last.ID()) != 0 {
 		q.push(newPair(k_first.ID(), k_last.ID()))
 	}
@@ -249,7 +252,7 @@ func requestL(dis *discover.UDPv5, destNode *enode.Node, target enode.ID) ([]*en
 	return findnode(dis, destNode, dists)
 }
 
-//go:linkname findNode github.com/ethereum/go-ethereum/p2p/discover.(*UDPv5).findnode
+//go:linkname findnode github.com/ethereum/go-ethereum/p2p/discover.(*UDPv5).findnode
 func findnode(_ *discover.UDPv5, n *enode.Node, distances []uint) ([]*enode.Node, error)
 
 func lookupDistances(target, dest enode.ID) (dists []uint) {

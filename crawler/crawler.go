@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/crypto"
+	gethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/discover/v4wire"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -15,6 +16,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/oschwald/geoip2-golang"
 	"go.uber.org/zap"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -29,7 +31,7 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	MaxDHTSize        = 17 * 16
 	Threshold         = 5
-	StartRound        = 2
+	StartRound        = 1
 )
 
 type Crawler struct {
@@ -131,6 +133,13 @@ func NewCrawler(config Config) (*Crawler, error) {
 	}
 
 	var discv5pool Pool
+	var port = 30340
+	// Set custom logger for the discovery5 service (Debug)
+	gethLogger := gethlog.New()
+	gethLogger.SetHandler(gethlog.FuncHandler(func(r *gethlog.Record) error {
+		return nil
+	}))
+
 	if config.Zeus {
 		var nodesTmps = make([]*enode.Node, len(nodes))
 		copy(nodesTmps, nodes)
@@ -141,13 +150,30 @@ func NewCrawler(config Config) (*Crawler, error) {
 			}
 			var tmps = make([]*enode.Node, len(nodesTmps)) //we need to copy the nodesTmps
 			copy(tmps, nodesTmps)
-			ld, cfg = makeDiscoveryConfig(tmp, tmps)
-			innerConn := listen(ld, "")
+			prk, err := crypto.GenerateKey()
+			// configuration of the discovery5
+			ld := enode.NewLocalNode(tmp, prk)
+			cfg := discover.Config{
+				PrivateKey:   prk,
+				NetRestrict:  nil,
+				Bootnodes:    nodes,
+				Unhandled:    nil, // Not used in dv5
+				Log:          gethLogger,
+				ValidSchemes: enode.ValidSchemes,
+			}
+			// udp address to listen
+			udpAddr := &net.UDPAddr{
+				IP:   net.IPv4zero,
+				Port: port,
+			}
+			conn, err := net.ListenUDP("udp", udpAddr)
+			port++
 			counterUDP := &CounterUDP{
-				conn:    innerConn,
+				conn:    conn,
 				counter: counter,
 			}
 			discv5, err := discover.ListenV5(counterUDP, ld, cfg)
+
 			if err != nil {
 				return nil, err
 			}
@@ -331,8 +357,14 @@ func (c *Crawler) Crawl() {
 
 		if c.discv5Pool == nil {
 			result, err = c.crawlBFS(node) //we also updated the node info
+			if err != nil {
+				c.logger.Error("crawlBFS node failed", zap.Error(err))
+			}
 		} else {
 			result, err = c.crawlZeus(node) //we also updated the node info
+			if err != nil {
+				c.logger.Error("crawlZeus node failed", zap.Error(err))
+			}
 		}
 
 		myNode := &Node{
@@ -342,9 +374,7 @@ func (c *Crawler) Crawl() {
 			ID:         node.ID(),
 			AccessTime: time.Now(),
 		}
-		if err != nil {
-			c.logger.Error("crawl_bfs node failed", zap.Error(err))
-		}
+
 		if result != nil {
 			for i := range result {
 				c.DHTCh <- result[i] //add the node to the dhtch
