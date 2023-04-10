@@ -15,20 +15,20 @@ const (
 )
 
 type NodeRecord struct {
-	ID              string
-	Seq             uint64
-	AccessTime      time.Time
-	Address         string
-	ConnectAble     bool
-	NeighborCount   int
-	Country         string
-	City            string
-	Clients         string
-	Os              string
-	ClientsRuntime  string
-	NetworkID       int
-	TotalDifficulty string
-	HeadHash        string
+	ID              string    `json:"id,omitempty"`
+	Seq             uint64    `json:"seq,omitempty"`
+	AccessTime      time.Time `json:"accessTime,omitempty"`
+	Address         string    `json:"address,omitempty"`
+	ConnectAble     bool      `json:"connectAble,omitempty"`
+	NeighborCount   int       `json:"neighborCount,omitempty"`
+	Country         string    `json:"country,omitempty"`
+	City            string    `json:"city,omitempty"`
+	Clients         string    `json:"clients,omitempty"`
+	Os              string    `json:"os,omitempty"`
+	ClientsRuntime  string    `json:"clientsRuntime,omitempty"`
+	NetworkID       int       `json:"networkId,omitempty"`
+	TotalDifficulty string    `json:"totalDifficulty,omitempty"`
+	HeadHash        string    `json:"headHash,omitempty"`
 }
 
 func main() {

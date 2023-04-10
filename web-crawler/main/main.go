@@ -19,18 +19,18 @@ const (
 type NodeRecord struct {
 	ID              string    `json:"id,omitempty"`
 	Seq             uint64    `json:"seq,omitempty"`
-	AccessTime      time.Time `json:"lastUpdate,omitempty"`
-	Address         string    `json:"host,omitempty"`
-	ConnectAble     bool      `json:"connect_able,omitempty"`
-	NeighborCount   int       `json:"neighbor_count,omitempty"`
+	AccessTime      time.Time `json:"accessTime,omitempty"`
+	Address         string    `json:"address,omitempty"`
+	ConnectAble     bool      `json:"connectAble,omitempty"`
+	NeighborCount   int       `json:"neighborCount,omitempty"`
 	Country         string    `json:"country,omitempty"`
 	City            string    `json:"city,omitempty"`
-	Clients         string    `json:"client,omitempty"`
+	Clients         string    `json:"clients,omitempty"`
 	Os              string    `json:"os,omitempty"`
-	ClientsRuntime  string    `json:"clients_runtime,omitempty"`
-	NetworkID       int       `json:"network_id,omitempty"`
-	TotalDifficulty string    `json:"total_difficulty,omitempty"`
-	HeadHash        string    `json:"head_hash,omitempty"`
+	ClientsRuntime  string    `json:"clientsRuntime,omitempty"`
+	NetworkID       int       `json:"networkId,omitempty"`
+	TotalDifficulty string    `json:"totalDifficulty,omitempty"`
+	HeadHash        string    `json:"headHash,omitempty"`
 }
 
 type RespData struct {
