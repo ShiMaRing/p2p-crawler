@@ -186,8 +186,8 @@ func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
 	//we will implement the zeus algorithm here
 	conn.Conn.Ping(node)
 	time.Sleep(time.Second * 1)
-	enr, err := conn.Conn.RequestENR(node)
-	if err == nil {
+	enr := conn.Conn.Resolve(node)
+	if enr != nil {
 		*node = *enr
 	}
 	q := newQueue()

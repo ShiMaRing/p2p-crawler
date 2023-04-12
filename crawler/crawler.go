@@ -24,9 +24,9 @@ import (
 
 const (
 	RoundInterval     = 30 * time.Second //crawl_bfs interval for each node
-	DefaultTimeout    = 30 * time.Minute //check interval for all nodes
+	DefaultTimeout    = 60 * time.Minute //check interval for all nodes
 	respTimeout       = 500 * time.Millisecond
-	DefaultChanelSize = 1024
+	DefaultChanelSize = 10248
 	seedCount         = 64
 	seedMaxAge        = 5 * 24 * time.Hour
 	MaxDHTSize        = 17 * 16

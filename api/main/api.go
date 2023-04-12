@@ -6,12 +6,13 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
+	"p2p-crawler/crawler"
 	"time"
 )
 
 const (
 	driverName     = "mysql"
-	dataSourceName = "root:root@tcp(127.0.0.1:32769)/db_p2p_crawler?parseTime=true"
+	dataSourceName = crawler.DataSourceURl
 )
 
 type NodeRecord struct {
@@ -29,6 +30,13 @@ type NodeRecord struct {
 	NetworkID       int       `json:"networkId,omitempty"`
 	TotalDifficulty string    `json:"totalDifficulty,omitempty"`
 	HeadHash        string    `json:"headHash,omitempty"`
+}
+
+const dbName = "ethernodes"
+
+//wrapper the query
+func wrapper(s string) string {
+	return fmt.Sprintf(s, dbName)
 }
 
 func main() {
@@ -54,7 +62,7 @@ func main() {
 	r.GET("/nodeRecords", func(c *gin.Context) {
 
 		// Query data
-		rows, err := db.Query("SELECT * FROM db_p2p_crawler.nodes")
+		rows, err := db.Query(wrapper("SELECT * FROM %s.nodes"))
 		if err != nil {
 			panic(err.Error())
 		}
@@ -83,7 +91,7 @@ func main() {
 
 		// Query data
 		var nodeRecord NodeRecord
-		err := db.QueryRow("SELECT * FROM db_p2p_crawler.nodes WHERE id = ?", id).Scan(&nodeRecord.ID, &nodeRecord.Seq, &nodeRecord.AccessTime, &nodeRecord.Address, &nodeRecord.ConnectAble, &nodeRecord.NeighborCount, &nodeRecord.Country, &nodeRecord.City, &nodeRecord.Clients, &nodeRecord.Os, &nodeRecord.ClientsRuntime, &nodeRecord.NetworkID, &nodeRecord.TotalDifficulty, &nodeRecord.HeadHash)
+		err := db.QueryRow(wrapper("SELECT * FROM %s.nodes WHERE id = ?"), id).Scan(&nodeRecord.ID, &nodeRecord.Seq, &nodeRecord.AccessTime, &nodeRecord.Address, &nodeRecord.ConnectAble, &nodeRecord.NeighborCount, &nodeRecord.Country, &nodeRecord.City, &nodeRecord.Clients, &nodeRecord.Os, &nodeRecord.ClientsRuntime, &nodeRecord.NetworkID, &nodeRecord.TotalDifficulty, &nodeRecord.HeadHash)
 		if err != nil {
 			fmt.Println(err.Error())
 			panic(err.Error())
@@ -102,7 +110,7 @@ func main() {
 		}
 
 		// Insert data
-		stmt, err := db.Prepare("INSERT INTO db_p2p_crawler.nodes(id, seq, access_time, address, connect_able, neighbor_count, country, city, clients, os, clients_runtime, network_id, total_difficulty, head_hash) VALUES(?,?,?,?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		stmt, err := db.Prepare(wrapper("INSERT INTO %s.nodes(id, seq, access_time, address, connect_able, neighbor_count, country, city, clients, os, clients_runtime, network_id, total_difficulty, head_hash) VALUES(?,?,?,?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
 		if err != nil {
 			panic(err.Error())
 		}
@@ -120,7 +128,7 @@ func main() {
 		}
 
 		// Update data
-		stmt, err := db.Prepare("UPDATE db_p2p_crawler.nodes SET seq=?, access_time=?, address=?, connect_able=?, neighbor_count=?, country=?, city=?, clients=?, os=?, clients_runtime=?, network_id=?, total_difficulty=?, head_hash=? WHERE id=?")
+		stmt, err := db.Prepare(wrapper("UPDATE %s.nodes SET seq=?, access_time=?, address=?, connect_able=?, neighbor_count=?, country=?, city=?, clients=?, os=?, clients_runtime=?, network_id=?, total_difficulty=?, head_hash=? WHERE id=?"))
 		if err != nil {
 			panic(err.Error())
 		}
@@ -134,7 +142,7 @@ func main() {
 		id := c.Param("id")
 
 		// Delete data
-		stmt, err := db.Prepare("DELETE FROM db_p2p_crawler.nodes WHERE id=?")
+		stmt, err := db.Prepare(wrapper("DELETE FROM %s.nodes WHERE id=?"))
 		if err != nil {
 			panic(err.Error())
 		}
