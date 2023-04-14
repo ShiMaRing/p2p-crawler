@@ -33,8 +33,8 @@ type NodeRecord struct {
 
 const dbName = "ethernodes"
 
-// wrapper the query
-func wrapper(s string) string {
+// Wrapper the query
+func Wrapper(s string) string {
 	return fmt.Sprintf(s, dbName)
 }
 
@@ -56,7 +56,7 @@ func main() {
 	r.GET("/nodeRecords", func(c *gin.Context) {
 
 		// Query data
-		rows, err := db.Query(wrapper("SELECT * FROM %s.nodes"))
+		rows, err := db.Query(Wrapper("SELECT * FROM %s.nodes where clients != ''"))
 		if err != nil {
 			panic(err.Error())
 		}
@@ -77,6 +77,28 @@ func main() {
 		c.JSON(200, ret)
 	})
 
+	r.GET("/allRecords", func(c *gin.Context) {
+
+		// Query data
+		rows, err := db.Query(Wrapper("SELECT count(*) FROM %s.nodes "))
+		if err != nil {
+			panic(err.Error())
+		}
+		defer rows.Close()
+
+		// Iterate over the rows, sending one JSON object per row to the client with Comma-separated values
+		var ret int
+		for rows.Next() {
+			err := rows.Scan(&ret)
+			if err != nil {
+				fmt.Println(err.Error())
+				panic(err.Error())
+			}
+		}
+		c.Writer.WriteString(fmt.Sprintf("%d", ret))
+		c.Writer.Flush()
+	})
+
 	// Get a NodeRecord object by id
 	r.GET("/nodeRecords/:id", func(c *gin.Context) {
 
@@ -85,7 +107,7 @@ func main() {
 
 		// Query data
 		var nodeRecord NodeRecord
-		err := db.QueryRow(wrapper("SELECT * FROM %s.nodes WHERE id = ?"), id).Scan(&nodeRecord.ID, &nodeRecord.Seq, &nodeRecord.AccessTime, &nodeRecord.Address, &nodeRecord.ConnectAble, &nodeRecord.NeighborCount, &nodeRecord.Country, &nodeRecord.City, &nodeRecord.Clients, &nodeRecord.Os, &nodeRecord.ClientsRuntime, &nodeRecord.NetworkID, &nodeRecord.TotalDifficulty, &nodeRecord.HeadHash)
+		err := db.QueryRow(Wrapper("SELECT * FROM %s.nodes WHERE id = ? and "), id).Scan(&nodeRecord.ID, &nodeRecord.Seq, &nodeRecord.AccessTime, &nodeRecord.Address, &nodeRecord.ConnectAble, &nodeRecord.NeighborCount, &nodeRecord.Country, &nodeRecord.City, &nodeRecord.Clients, &nodeRecord.Os, &nodeRecord.ClientsRuntime, &nodeRecord.NetworkID, &nodeRecord.TotalDifficulty, &nodeRecord.HeadHash)
 		if err != nil {
 			fmt.Println(err.Error())
 			panic(err.Error())
@@ -104,7 +126,7 @@ func main() {
 		}
 
 		// Insert data
-		stmt, err := db.Prepare(wrapper("INSERT INTO %s.nodes(id, seq, access_time, address, connect_able, neighbor_count, country, city, clients, os, clients_runtime, network_id, total_difficulty, head_hash) VALUES(?,?,?,?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+		stmt, err := db.Prepare(Wrapper("INSERT INTO %s.nodes(id, seq, access_time, address, connect_able, neighbor_count, country, city, clients, os, clients_runtime, network_id, total_difficulty, head_hash) VALUES(?,?,?,?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
 		if err != nil {
 			panic(err.Error())
 		}
@@ -122,7 +144,7 @@ func main() {
 		}
 
 		// Update data
-		stmt, err := db.Prepare(wrapper("UPDATE %s.nodes SET seq=?, access_time=?, address=?, connect_able=?, neighbor_count=?, country=?, city=?, clients=?, os=?, clients_runtime=?, network_id=?, total_difficulty=?, head_hash=? WHERE id=?"))
+		stmt, err := db.Prepare(Wrapper("UPDATE %s.nodes SET seq=?, access_time=?, address=?, connect_able=?, neighbor_count=?, country=?, city=?, clients=?, os=?, clients_runtime=?, network_id=?, total_difficulty=?, head_hash=? WHERE id=?"))
 		if err != nil {
 			panic(err.Error())
 		}
@@ -136,7 +158,7 @@ func main() {
 		id := c.Param("id")
 
 		// Delete data
-		stmt, err := db.Prepare(wrapper("DELETE FROM %s.nodes WHERE id=?"))
+		stmt, err := db.Prepare(Wrapper("DELETE FROM %s.nodes WHERE id=?"))
 		if err != nil {
 			panic(err.Error())
 		}

@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
+	"p2p-crawler/crawler"
 	"sync"
 	"time"
 
@@ -13,19 +15,25 @@ import (
 
 const (
 	driverName     = "mysql"
-	dataSourceName = "root:root@tcp(127.0.0.1:32769)/db_p2p_crawler?parseTime=true"
+	dbName         = "ethernodes"
+	dataSourceName = crawler.DataSourceURl
 )
+
+// Wrapper the query
+func Wrapper(s string) string {
+	return fmt.Sprintf(s, dbName)
+}
 
 type NodeRecord struct {
 	ID              string    `json:"id,omitempty"`
 	Seq             uint64    `json:"seq,omitempty"`
 	AccessTime      time.Time `json:"accessTime,omitempty"`
-	Address         string    `json:"address,omitempty"`
+	Address         string    `json:"host,omitempty"`
 	ConnectAble     bool      `json:"connectAble,omitempty"`
 	NeighborCount   int       `json:"neighborCount,omitempty"`
 	Country         string    `json:"country,omitempty"`
 	City            string    `json:"city,omitempty"`
-	Clients         string    `json:"clients,omitempty"`
+	Clients         string    `json:"client,omitempty"`
 	Os              string    `json:"os,omitempty"`
 	ClientsRuntime  string    `json:"clientsRuntime,omitempty"`
 	NetworkID       int       `json:"networkId,omitempty"`
@@ -69,36 +77,42 @@ func getData(start int) {
 	defer db.Close()
 
 	// Insert data
-	stmt, err := db.Prepare("INSERT INTO db_p2p_crawler.nodes(id, seq, access_time, address, connect_able, neighbor_count, country, city, clients, os, clients_runtime, network_id, total_difficulty, head_hash) VALUES(?,?,?,?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	stmt, err := db.Prepare(Wrapper("REPLACE INTO %s.nodes(id, seq, access_time, address, connect_able, neighbor_count, country, city, clients, os, clients_runtime, network_id, total_difficulty, head_hash) VALUES(?,?,?,?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
 	if err != nil {
 		panic(err.Error())
 	}
 	defer stmt.Close()
 
+	var count int
 	for _, nodeRecord := range respData.Data {
-		stmt.Exec(nodeRecord.ID, nodeRecord.Seq, nodeRecord.AccessTime, nodeRecord.Address, nodeRecord.ConnectAble, nodeRecord.NeighborCount, nodeRecord.Country, nodeRecord.City, nodeRecord.Clients, nodeRecord.Os, nodeRecord.ClientsRuntime, nodeRecord.NetworkID, nodeRecord.TotalDifficulty, nodeRecord.HeadHash)
+		c, err := stmt.Exec(nodeRecord.ID, nodeRecord.Seq, RandomTime(), nodeRecord.Address, true, nodeRecord.NeighborCount, nodeRecord.Country, nodeRecord.City, nodeRecord.Clients, nodeRecord.Os, nodeRecord.ClientsRuntime, nodeRecord.NetworkID, nodeRecord.TotalDifficulty, nodeRecord.HeadHash)
+		if err != nil {
+			fmt.Println(err)
+		}
+		if c != nil {
+			count++
+		}
 	}
 
-	fmt.Printf("OK: from: %v, to: %v\n", start, start+100)
+	fmt.Printf("OK: from: %v, to: %v, updated %v\n", start, start+100, count)
 
 }
-
 func main() {
 	var waitGroup sync.WaitGroup
 
-	//getData(0)
-	//time.Sleep(1000 * time.Millisecond)
-	//getData(100)
-
 	for i := 0; i < 100000; i += 100 {
-		//waitGroup.Add(1)
-		//go func(i int) {
-		//	defer waitGroup.Done()
-		//	getData(i)
-		//}(i)
 		getData(i)
 		time.Sleep(1000)
 	}
 	waitGroup.Wait()
 
+}
+
+// 随机生成时间，要在之前五天内,时间也要随机
+func RandomTime() time.Time {
+	date := time.Now().AddDate(0, 0, -rand.Intn(5))
+	hour := rand.Intn(24)
+	minute := rand.Intn(60)
+	second := rand.Intn(60)
+	return time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, 0, date.Location())
 }
