@@ -30,8 +30,8 @@ const (
 	seedCount         = 64
 	seedMaxAge        = 5 * 24 * time.Hour
 	MaxDHTSize        = 17 * 16
-	Threshold         = 5
-	StartRound        = 2
+	Threshold         = 2
+	StartRound        = 3
 )
 
 type Crawler struct {
@@ -321,7 +321,7 @@ func (c *Crawler) daemon() {
 				c.writer.WriteString(node.n.String() + "\n")
 			}
 			//we need to deal with the node info and save it to the mysql database
-			if !c.IsSql {
+			if !c.IsSql || node.ClientInfo == nil {
 				continue
 			}
 			c.databaseCh <- node //send the node to the database chan

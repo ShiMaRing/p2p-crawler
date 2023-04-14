@@ -5,8 +5,8 @@ import (
 )
 
 const (
-	DefaultWorkers = 32
-	MAX_WORKERS    = 64
+	DefaultWorkers = 512
+	MAX_WORKERS    = 512
 	DataSourceURl  = "root:xgs1150840779@tcp(localhost:3306)/ethernodes?charset=utf8&parseTime=true"
 )
 
