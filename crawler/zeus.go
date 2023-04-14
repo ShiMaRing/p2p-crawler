@@ -3,6 +3,7 @@ package crawler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"time"
@@ -177,6 +178,11 @@ func mergeWith10(a enode.ID, length int) enode.ID {
 func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), RoundInterval)
 	conn, err := c.discv5Pool.Get()
+	if err != nil {
+		cancel()
+		fmt.Println("get discv5 conn error", err)
+		return nil, err
+	}
 	defer func() {
 		//fmt.Println("crawlZeus end")
 		cancel()

@@ -31,7 +31,7 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	MaxDHTSize        = 17 * 16
 	Threshold         = 2
-	StartRound        = 3
+	StartRound        = 2
 )
 
 type Crawler struct {
@@ -131,9 +131,8 @@ func NewCrawler(config Config) (*Crawler, error) {
 	for i := range nodes {
 		ldb.UpdateNode(nodes[i])
 	}
-
+	//create a discv5 pool,we do discv5 and v4 parallel
 	var discv5pool Pool
-	var port = 30340
 	// Set custom logger for the discovery5 service (Debug)
 	gethLogger := gethlog.New()
 	gethLogger.SetHandler(gethlog.FuncHandler(func(r *gethlog.Record) error {
@@ -163,14 +162,12 @@ func NewCrawler(config Config) (*Crawler, error) {
 			}
 			// udp address to listen
 			udpAddr := &net.UDPAddr{
-				IP:   net.IPv4(0, 0, 0, 0),
-				Port: port,
+				IP: net.IPv4(0, 0, 0, 0),
 			}
 			conn, err := net.ListenUDP("udp", udpAddr)
 			if err != nil {
 				return nil, err
 			}
-			port++
 			counterUDP := &CounterUDP{
 				conn:    conn,
 				counter: counter,
@@ -351,22 +348,15 @@ func (c *Crawler) Crawl() {
 		c.Cache[node.ID()] = struct{}{}
 		c.mu.Unlock()
 		//get node for crawl_bfs,the node never crawled
-
 		// in this wat ,choose the crawl method
 		//we can choose the crawl_bfs algorithm here
 		var result []*enode.Node
 		var err error
-
-		if c.discv5Pool == nil {
-			result, err = c.crawlBFS(node) //we also updated the node info
-			if err != nil {
-				//c.logger.Error("crawlBFS node failed", zap.Error(err))
-			}
-		} else {
-			result, err = c.crawlZeus(node) //we also updated the node info
-			if err != nil {
-				//c.logger.Error("crawlZeus node failed", zap.Error(err))
-			}
+		//we try to get the nodes from the dht use zeus first
+		result, err = c.crawlZeus(node) //we also updated the node info
+		if err != nil || result == nil {
+			//c.logger.Error("crawlZeus node failed", zap.Error(err))
+			result, err = c.crawlBFS(node) //we also try to get the nodes from the random nodes
 		}
 
 		myNode := &Node{
@@ -388,9 +378,6 @@ func (c *Crawler) Crawl() {
 			if err == nil && info != nil {
 				myNode.ClientInfo = info
 				c.counter.AddClientInfoCount() //add the client info count
-				if info.NetworkID == 1 {
-					c.counter.AddEthNodesCount() //add the eth nodes count
-				}
 			}
 		} else {
 			myNode.ConnectAble = false
@@ -408,7 +395,7 @@ func (c *Crawler) Crawl() {
 
 type nodes []*enode.Node //we will get nodes arr from chan and deal with it
 
-// crawlBFS the node with bfs
+// crawlBFS the node with bfs and random method
 func (c *Crawler) crawlBFS(node *enode.Node) ([]*enode.Node, error) {
 	var ctx, cancel = context.WithTimeout(context.Background(), RoundInterval)
 	var cache = make(map[enode.ID]*enode.Node) //cache the nodes
