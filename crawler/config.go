@@ -7,7 +7,7 @@ import (
 const (
 	DefaultWorkers = 32
 	MAX_WORKERS    = 64
-	DataSourceURl  = "root:xgs1150840779@tcp(localhost:3306)/ethernodes?charset=utf8"
+	DataSourceURl  = "root:xgs1150840779@tcp(localhost:3306)/ethernodes?charset=utf8&parseTime=true"
 )
 
 // Config is the context that the crawler uses to store the state of the crawler

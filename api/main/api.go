@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 	"p2p-crawler/crawler"
@@ -34,7 +33,7 @@ type NodeRecord struct {
 
 const dbName = "ethernodes"
 
-//wrapper the query
+// wrapper the query
 func wrapper(s string) string {
 	return fmt.Sprintf(s, dbName)
 }
@@ -51,12 +50,7 @@ func main() {
 	// Create a gin router with default middleware:
 	r := gin.Default()
 
-	// Enable CORS
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost", "http://127.0.0.1:5173"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowCredentials: true,
-	}))
+	r.Use(Cors())
 
 	// Get all NodeRecord objects
 	r.GET("/nodeRecords", func(c *gin.Context) {

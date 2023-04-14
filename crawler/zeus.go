@@ -22,7 +22,7 @@ func init() {
 	}
 }
 
-//store the from and the end of enode id
+// store the from and the end of enode id
 type pair struct {
 	from enode.ID
 	end  enode.ID
@@ -59,7 +59,7 @@ func (q *queue) pop() *pair {
 	return p
 }
 
-//whether the queue is empty
+// whether the queue is empty
 func (q *queue) empty() bool {
 	return q.nums == 0
 }
@@ -72,7 +72,7 @@ func (s set) merge(arr []*enode.Node) {
 	}
 }
 
-//getClosetKey returns the closet key with the given key
+// getClosetKey returns the closet key with the given key
 func getClosetKey(arr []*enode.Node, target enode.ID) *enode.Node {
 	//calculate the distance between the node and the target
 	if len(arr) == 0 {
@@ -91,7 +91,7 @@ func getClosetKey(arr []*enode.Node, target enode.ID) *enode.Node {
 	return closet
 }
 
-//if a>b return 1 else if a<b return -1 else return 0
+// if a>b return 1 else if a<b return -1 else return 0
 func compareId(a, b enode.ID) int {
 	for i := 0; i < len(a); i++ {
 		if a[i] > b[i] {
@@ -103,11 +103,11 @@ func compareId(a, b enode.ID) int {
 	return 0
 }
 
-//0~255
-//return c and the length of c ,the length of c is 0~255
-//we need to get the common prefix of a and b
-//we will return common prefix of a and b and the length of common prefix
-//the length of common prefix is 0~255
+// 0~255
+// return c and the length of c ,the length of c is 0~255
+// we need to get the common prefix of a and b
+// we will return common prefix of a and b and the length of common prefix
+// the length of common prefix is 0~255
 func getCommonPrefix(a, b enode.ID) int {
 	var length int
 	for i := 0; i < 32; i++ {
@@ -129,7 +129,7 @@ func getCommonPrefix(a, b enode.ID) int {
 	return length
 }
 
-//length bits start with 0 and other bits are 1
+// length bits start with 0 and other bits are 1
 func mergeWith01(a enode.ID, length int) enode.ID {
 	if length == MAX_LENGTH {
 		return a
@@ -225,6 +225,9 @@ func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
 			if err != nil {
 				return nil, err
 			}
+			if m == nil || len(m) == 0 {
+				continue
+			}
 			l.merge(m)
 			x := getClosetKey(m, s1)
 			if compareId(x.ID(), k1) != 0 {
@@ -235,6 +238,9 @@ func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
 			m, err = requestL(conn.Conn, node, s2)
 			if err != nil {
 				return nil, err
+			}
+			if m == nil || len(m) == 0 {
+				continue
 			}
 			l.merge(m)
 			y := getClosetKey(m, s2)

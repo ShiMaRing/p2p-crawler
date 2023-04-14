@@ -31,7 +31,7 @@ const (
 	seedMaxAge        = 5 * 24 * time.Hour
 	MaxDHTSize        = 17 * 16
 	Threshold         = 5
-	StartRound        = 3
+	StartRound        = 2
 )
 
 type Crawler struct {
@@ -252,7 +252,7 @@ func (c *Crawler) Boot() error {
 		c.Cache[c.BootNodes[i].ID()] = struct{}{}
 	}
 	//create the disc service
-	//c.RunDiscService()
+	c.RunDiscService()
 
 	defer func() {
 		c.cancel()
@@ -341,7 +341,7 @@ func (c *Crawler) daemon() {
 	}
 }
 
-//Crawl bfs crawl_bfs method
+// Crawl bfs crawl_bfs method
 func (c *Crawler) Crawl() {
 	select {
 	case <-c.ctx.Done():
@@ -408,7 +408,7 @@ func (c *Crawler) Crawl() {
 
 type nodes []*enode.Node //we will get nodes arr from chan and deal with it
 
-//crawlBFS the node with bfs
+// crawlBFS the node with bfs
 func (c *Crawler) crawlBFS(node *enode.Node) ([]*enode.Node, error) {
 	var ctx, cancel = context.WithTimeout(context.Background(), RoundInterval)
 	var cache = make(map[enode.ID]*enode.Node) //cache the nodes
@@ -514,8 +514,7 @@ func (c *Crawler) crawlBFS(node *enode.Node) ([]*enode.Node, error) {
 	}
 }
 
-//keep read the message from the connection, we will deal with the different message
-//
+// keep read the message from the connection, we will deal with the different message
 func (c *Crawler) loop(conn UDPConn, ctx context.Context, ld *enode.LocalNode,
 	prk *ecdsa.PrivateKey, nodesChan chan nodes, enrChan chan *enode.Node) {
 	for {

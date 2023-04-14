@@ -109,7 +109,6 @@ func dial(n *enode.Node, ourKey *ecdsa.PrivateKey) (*Conn, *ecdsa.PrivateKey, er
 
 func writeHello(conn *Conn, priv *ecdsa.PrivateKey) error {
 	pub0 := crypto.FromECDSAPub(&priv.PublicKey)[1:]
-
 	h := &Hello{
 		Version: 5,
 		Caps: []p2p.Cap{
@@ -128,9 +127,7 @@ func writeHello(conn *Conn, priv *ecdsa.PrivateKey) error {
 		},
 		ID: pub0,
 	}
-
 	conn.ourHighestProtoVersion = 66
-
 	return conn.Write(h)
 }
 
