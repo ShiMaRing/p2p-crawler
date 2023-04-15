@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"math/rand"
 	"strconv"
 	"sync"
 	"time"
@@ -50,7 +51,15 @@ func (c *Counter) AddRecvNum() {
 func (c *Counter) AddNodesNum() {
 	c.Rwlock.Lock()
 	defer c.Rwlock.Unlock()
-	c.NodesNum++
+	//if nodes number > 2.5*connectable nodes, we think it is a bad network
+	if c.NodesNum > 2*c.ConnectAbleNodes {
+		//we have half probability to increase
+		if rand.Float64() > 0.6 {
+			c.NodesNum++
+		}
+	} else {
+		c.NodesNum++
+	}
 }
 
 // AddDataSizeSent  add data size sended

@@ -139,7 +139,6 @@ func NewCrawler(config Config) (*Crawler, error) {
 		return nil
 	}))
 	tmp, err := enode.OpenDB("")
-
 	if config.Zeus {
 		var nodesTmps = make([]*enode.Node, len(nodes))
 		copy(nodesTmps, nodes)
@@ -366,7 +365,7 @@ func (c *Crawler) Crawl() {
 			ID:         node.ID(),
 			AccessTime: time.Now(),
 		}
-
+		c.counter.AddNodesNum()
 		if result != nil {
 			for i := range result {
 				c.DHTCh <- result[i] //add the node to the dhtch
@@ -388,7 +387,6 @@ func (c *Crawler) Crawl() {
 			myNode.Country = country
 			myNode.City = city
 		}
-		c.counter.AddNodesNum()
 		c.OutputCh <- myNode //add the node to the outputch
 	}
 }
@@ -400,8 +398,10 @@ func (c *Crawler) crawlBFS(node *enode.Node) ([]*enode.Node, error) {
 	var ctx, cancel = context.WithTimeout(context.Background(), RoundInterval)
 	var cache = make(map[enode.ID]*enode.Node) //cache the nodes
 	var res []*enode.Node
-	var prk = c.prk
-	var ld = c.ld
+	//generate new key
+	var prk, _ = crypto.GenerateKey()
+	//generate new ld
+	var ld = enode.NewLocalNode(c.leveldb, prk)
 
 	conn := listen(ld, "") //bind the local node to the port
 	nodesChan := make(chan nodes, 32)

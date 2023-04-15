@@ -191,11 +191,12 @@ func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
 	}()
 	//we will implement the zeus algorithm here
 	conn.Conn.Ping(node)
-	time.Sleep(time.Second * 1)
-	enr := conn.Conn.Resolve(node)
+	time.Sleep(respTimeout)
+	enr, _ := conn.Conn.RequestENR(node)
 	if enr != nil {
 		*node = *enr
 	}
+	time.Sleep(respTimeout)
 	q := newQueue()
 	l := set(make(map[enode.ID]*enode.Node))
 	m, err := requestL(conn.Conn, node, ALL_ZERO)
@@ -264,6 +265,7 @@ func (c *Crawler) crawlZeus(node *enode.Node) ([]*enode.Node, error) {
 
 func requestL(dis *discover.UDPv5, destNode *enode.Node, target enode.ID) ([]*enode.Node, error) {
 	dists := lookupDistances(target, destNode.ID())
+	time.Sleep(respTimeout)
 	return findnode(dis, destNode, dists)
 }
 
