@@ -143,9 +143,6 @@ func NewCrawler(config Config) (*Crawler, error) {
 		var nodesTmps = make([]*enode.Node, len(nodes))
 		copy(nodesTmps, nodes)
 		discv5pool, _ = NewChannelPool(DefaultWorkers, MAX_WORKERS, func() (*discover.UDPv5, error) {
-			if err != nil {
-				return nil, err
-			}
 			var tmps = make([]*enode.Node, len(nodesTmps)) //we need to copy the nodesTmps
 			copy(tmps, nodesTmps)
 			prk, err := crypto.GenerateKey()
@@ -353,9 +350,13 @@ func (c *Crawler) Crawl() {
 		var err error
 		//we try to get the nodes from the dht use zeus first
 		result, err = c.crawlZeus(node) //we also updated the node info
+
 		if err != nil || result == nil {
 			//c.logger.Error("crawlZeus node failed", zap.Error(err))
-			result, err = c.crawlBFS(node) //we also try to get the nodes from the random nodes
+			/*			result, err = c.crawlBFS(node) //we also try to get the nodes from the random nodes
+						if err != nil {
+							c.logger.Error("crawlBFS node failed", zap.Error(err))
+						}*/
 		}
 
 		myNode := &Node{
